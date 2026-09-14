@@ -1,0 +1,16 @@
+target/
+
+*.code-workspace
+*.zip
+*.iml
+*.class
+*.log
+
+.classpath
+.project
+.settings/
+.DS_Store
+
+Thumbs.db
+notes.txt
+notes.md
