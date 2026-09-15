@@ -6,12 +6,27 @@
 
   <groupId>de.mahagst.risingworld</groupId>
   <artifactId>rw-respawn-npc</artifactId>
-  <version>1.0-SNAPSHOT</version>
+  <version>1.0.0</version>
 
   <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <maven.compiler.source>20</maven.compiler.source>
     <maven.compiler.target>20</maven.compiler.target>
     <rw.plugin.api.version>0.9.3</rw.plugin.api.version>
   </properties>
+
+  <dependencies>
+    <!-- provided: install once via .\_tools\bootstrap-libs.ps1 -->
+    <dependency>
+      <groupId>net.rising-world</groupId>
+      <artifactId>plugin-api</artifactId>
+      <version>${rw.plugin.api.version}</version>
+      <scope>provided</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <finalName>RespawnNpc</finalName>
+  </build>
 
 </project>
