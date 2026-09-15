@@ -114,6 +114,12 @@ respawn_npcs:
   sec_* (capture-only), pregnant (capture-only)
 ```
 
+### Schema evolution
+
+No migration runner. `CREATE TABLE IF NOT EXISTS` is the target schema. After CREATE, call `SqliteSchema.ensureColumn` for each column added later so old `respawn.db` files pick it up.
+
+Copy [`_tools/templates/SqliteSchema.java`](../_tools/templates/SqliteSchema.java) into the plugin package (already present as `SqliteSchema.java`) and change the package line. `ensureColumn` is idempotent (`PRAGMA table_info`, then `ALTER TABLE ... ADD COLUMN` only if missing). Keep the call permanently -- it also covers an old db copied onto a new server.
+
 ## Scope
 
 v1: one plugin class (commands + death + timers), Snapshot, SQLite (`RespawnRepository`).

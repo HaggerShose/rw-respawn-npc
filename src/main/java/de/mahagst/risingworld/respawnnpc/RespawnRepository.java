@@ -82,6 +82,8 @@ final class RespawnRepository {
 				  pregnant INTEGER NOT NULL
 				)
 				""");
+		// Future columns: add to CREATE above, then
+		// SqliteSchema.ensureColumn(database, "respawn_npcs", "col", "TYPE");
 	}
 
 	Optional<RespawnNpc> find(long respawnId) {
