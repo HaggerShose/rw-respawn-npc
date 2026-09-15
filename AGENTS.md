@@ -30,24 +30,31 @@ Admin commands reply only to the executing admin. Auto-respawn is silent (no cha
 
 No command-name overlap with RespawnChest (`/make-refill`, `/refill-*`).
 
-| Command                   | Effect                                                                                                         |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `/make-respawn <minutes>` | Register target NPC; NPC state = snapshot, **your** pose = spawn. Already registered: update interval only.    |
-| `/respawn-update`         | Save current live NPC as new snapshot **and** spawn pose from your position/rotation (pending timer stays).    |
-| `/respawn-now`            | Spawn replacement immediately. If the current NPC still lives, delete it (no corpse) after a successful spawn. |
-| `/respawn-remove`         | Remove from DB, kill pending timer. Living NPC stays.                                                          |
-| `/respawn-info`           | Interval, pending yes/no (+ remaining), spawn/current position, type/name                                      |
-| `/respawn-list`           | All entries: id, type/name, alive/dead, current pos, spawn pos, pending                                        |
+| Command                           | Effect                                                                                                               |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `/make-respawn <minutes>`         | Register target NPC; NPC state = snapshot, **your** pose = spawn. Already registered: error (use `/respawn-update`). |
+| `/respawn-update`                 | Snapshot only (live NPC attributes). Optional token: `snapshot`.                                                     |
+| `/respawn-update pose`            | Spawn pose only from your position/rotation.                                                                         |
+| `/respawn-update all`             | Snapshot + spawn pose.                                                                                               |
+| `/respawn-update timer <minutes>` | Interval only (pending timer not restarted).                                                                         |
+| `/respawn-update #id ...`         | Same modes by respawn id (no LoS).                                                                                   |
+| `/respawn-now`                    | Spawn replacement immediately. If the current NPC still lives, delete it (no corpse) after a successful spawn.       |
+| `/respawn-remove`                 | Remove from DB, kill pending timer. Living NPC stays.                                                                |
+| `/respawn-info`                   | Interval, pending yes/no (+ remaining), spawn/current position, type/name                                            |
+| `/respawn-list`                   | All entries: id, type/name, alive/dead, current pos, spawn pos, pending                                              |
 
-Focus: `Player.getNpcInLineOfSight(10f, callback)`; if null, nearest non-transient NPC within 10 blocks (`World.getAllNpcs`).
+Focus: `Player.getNpcInLineOfSight(10f, callback)`; if null, nearest non-transient NPC within 10 blocks (`World.getAllNpcs`). `#id` skips focus.
 
 Reject:
 
 - transient NPCs
-- no NPC in focus or nearby (except `/respawn-list`)
+- no NPC in focus or nearby (except `/respawn-list` and `#id` forms)
 - `/make-respawn` without a minutes argument
+- `/make-respawn` on an already registered NPC
+- `/respawn-update` with unknown tokens / `timer` without minutes
+- snapshot/`all` when the current NPC body is missing or dead
 
-Interval in minutes: `0` (or less) -> effective **5 seconds**. Else `minutes * 60`, cap **86400** (one day). Stored as `interval_seconds` (effective delay).
+Interval in minutes: `0` (or less) -> effective test seconds (`MIN_TEST_SECONDS`). Else `minutes * 60`, cap **86400** (one day). Stored as `interval_seconds` (effective delay).
 
 **Not in v1:** loot chances, YAML tables, admin UI, periodic always-on respawn, corpse cleanup.
 
@@ -61,7 +68,7 @@ getNpcInLineOfSight(10f)
   -> INSERT respawn_npcs (own PK)
 ```
 
-- Spawn pose always from the admin player at register / `/respawn-update` (not from the NPC, so roaming NPCs still respawn at a fixed spot).
+- Spawn pose from the admin player at register / `pose` / `all` (not from the NPC). Default `/respawn-update` does not change pose.
 - Spawn: `World.spawnNpc(typeID, variant, position, rotation, false)` (persistent).
 - Apply only fields with setters. Capture also stores secondary item + pregnant (no setters).
 - Clothes: `getClothes().serialize()` / `deserialize(bytes)`.
@@ -154,4 +161,5 @@ PowerShell: always quote `-D...` args.
 - Auto-respawn stays silent. Commands only for server admins.
 - Death hot path: RAM map first; SQLite only on hit.
 - Secondary item and pregnancy are stored, not restored.
-- Spawn pose from player; LoS then nearest within 10.
+- Spawn pose from player at register / `pose` / `all`; default `/respawn-update` is snapshot only.
+- LoS then nearest within 10; `#id` for update by respawn id.

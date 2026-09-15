@@ -84,7 +84,7 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 		event.setCancelled(true);
 		switch (cmd) {
 			case "/make-respawn" -> makeRespawn(player, args);
-			case "/respawn-update" -> withFocused(player, this::update);
+			case "/respawn-update" -> respawnUpdate(player, args);
 			case "/respawn-now" -> withFocused(player, this::now);
 			case "/respawn-remove" -> withFocused(player, this::remove);
 			case "/respawn-info" -> withFocused(player, this::info);
@@ -167,7 +167,8 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 	private void register(Player player, Npc npc, int intervalSeconds) {
 		Optional<RespawnNpc> existing = repository.findByNpcId(npc.getGlobalID());
 		if (existing.isPresent()) {
-			updateInterval(player, existing.get(), intervalSeconds);
+			player.sendTextMessage("NPC is already registered (#" + existing.get().respawnId()
+					+ "). Use /respawn-update ...");
 			return;
 		}
 		Vector3f spawnPos = player.getPosition();
@@ -188,39 +189,175 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 				+ " (spawn at your position)");
 	}
 
-	private void updateInterval(Player player, RespawnNpc saved, int intervalSeconds) {
-		if (saved.intervalSeconds() == intervalSeconds) {
-			player.sendTextMessage("Interval not changed (already " + intervalSeconds + "s).");
+	/**
+	 * /respawn-update [#id] [snapshot|pose|all|timer <minutes>]
+	 * Default mode is snapshot. Timer minutes required for timer mode.
+	 */
+	private void respawnUpdate(Player player, String[] args) {
+		UpdateRequest request = parseUpdateRequest(args);
+		if (request == null) {
+			player.sendTextMessage(
+					"Usage: /respawn-update [#id] [snapshot|pose|all|timer <minutes>]");
 			return;
 		}
-		repository.setIntervalSeconds(saved.respawnId(), intervalSeconds);
-		player.sendTextMessage("Interval updated to " + intervalSeconds + "s.");
+		if (request.respawnId() != null) {
+			Optional<RespawnNpc> savedOpt = repository.find(request.respawnId());
+			if (savedOpt.isEmpty()) {
+				player.sendTextMessage("Respawn #" + request.respawnId() + " not found.");
+				return;
+			}
+			applyUpdate(player, savedOpt.get(), null, request.mode(), request.timerMinutes());
+			return;
+		}
+		withFocused(player, (p, npc) -> {
+			RespawnNpc saved = requireRegistered(p, npc);
+			if (saved == null) {
+				return;
+			}
+			applyUpdate(p, saved, npc, request.mode(), request.timerMinutes());
+		});
 	}
 
-	private void update(Player player, Npc npc) {
-		RespawnNpc saved = requireRegistered(player, npc);
-		if (saved == null) {
-			return;
+	private static UpdateRequest parseUpdateRequest(String[] args) {
+		Long respawnId = null;
+		UpdateMode mode = UpdateMode.SNAPSHOT;
+		Integer timerMinutes = null;
+		int i = 1;
+		if (i < args.length && args[i].startsWith("#")) {
+			String raw = args[i].substring(1);
+			try {
+				respawnId = Long.parseLong(raw);
+			} catch (NumberFormatException e) {
+				return null;
+			}
+			if (respawnId <= 0) {
+				return null;
+			}
+			i++;
 		}
-		Vector3f spawnPos = player.getPosition();
-		Quaternion spawnRot = player.getRotation();
-		if (spawnPos == null || spawnRot == null) {
-			player.sendTextMessage("Could not read player position.");
-			return;
+		if (i < args.length) {
+			String token = args[i].toLowerCase(Locale.ROOT);
+			switch (token) {
+				case "snapshot" -> i++;
+				case "pose" -> {
+					mode = UpdateMode.POSE;
+					i++;
+				}
+				case "all" -> {
+					mode = UpdateMode.ALL;
+					i++;
+				}
+				case "timer" -> {
+					mode = UpdateMode.TIMER;
+					i++;
+					if (i >= args.length) {
+						return null;
+					}
+					try {
+						timerMinutes = Integer.parseInt(args[i]);
+					} catch (NumberFormatException e) {
+						return null;
+					}
+					i++;
+				}
+				default -> {
+					return null;
+				}
+			}
 		}
+		if (i != args.length) {
+			return null;
+		}
+		return new UpdateRequest(respawnId, mode, timerMinutes);
+	}
+
+	private void applyUpdate(
+			Player player,
+			RespawnNpc saved,
+			Npc focusedNpc,
+			UpdateMode mode,
+			Integer timerMinutes) {
+		switch (mode) {
+			case SNAPSHOT -> updateSnapshot(player, saved, focusedNpc, false);
+			case POSE -> updatePose(player, saved, false);
+			case ALL -> {
+				if (!updateSnapshot(player, saved, focusedNpc, true)) {
+					return;
+				}
+				if (!updatePose(player, saved, true)) {
+					return;
+				}
+				player.sendTextMessage("Snapshot and spawn pose updated (#" + saved.respawnId() + ").");
+			}
+			case TIMER -> updateInterval(player, saved, intervalSecondsFromMinutes(timerMinutes));
+		}
+	}
+
+	private boolean updateSnapshot(Player player, RespawnNpc saved, Npc focusedNpc, boolean quietSuccess) {
+		Npc live = focusedNpc;
+		if (live == null) {
+			live = World.getNpc(saved.currentNpcId());
+		}
+		if (live == null || live.isDead()) {
+			player.sendTextMessage("NPC #" + saved.respawnId() + " is not alive; cannot update snapshot.");
+			return false;
+		}
+		if (live.isTransient()) {
+			player.sendTextMessage("Transient NPCs are not supported.");
+			return false;
+		}
+		Vector3f keepPos = new Vector3f(saved.posX(), saved.posY(), saved.posZ());
+		Quaternion keepRot = new Quaternion(saved.rotX(), saved.rotY(), saved.rotZ(), saved.rotW());
 		RespawnNpc snapshot = NpcSnapshot.capture(
-				npc,
-				spawnPos,
-				spawnRot,
+				live,
+				keepPos,
+				keepRot,
 				saved.respawnId(),
 				saved.intervalSeconds(),
 				saved.nextRespawn(),
 				saved.createdAt());
 		if (!repository.replaceSnapshot(snapshot)) {
 			player.sendTextMessage("Could not save snapshot.");
+			return false;
+		}
+		if (!quietSuccess) {
+			player.sendTextMessage("Snapshot updated (#" + saved.respawnId() + ").");
+		}
+		return true;
+	}
+
+	private boolean updatePose(Player player, RespawnNpc saved, boolean quietSuccess) {
+		Vector3f spawnPos = player.getPosition();
+		Quaternion spawnRot = player.getRotation();
+		if (spawnPos == null || spawnRot == null) {
+			player.sendTextMessage("Could not read player position.");
+			return false;
+		}
+		if (!repository.setSpawnPose(
+				saved.respawnId(),
+				spawnPos.x,
+				spawnPos.y,
+				spawnPos.z,
+				spawnRot.x,
+				spawnRot.y,
+				spawnRot.z,
+				spawnRot.w)) {
+			player.sendTextMessage("Could not save spawn pose.");
+			return false;
+		}
+		if (!quietSuccess) {
+			player.sendTextMessage("Spawn pose updated (#" + saved.respawnId() + ").");
+		}
+		return true;
+	}
+
+	private void updateInterval(Player player, RespawnNpc saved, int intervalSeconds) {
+		if (saved.intervalSeconds() == intervalSeconds) {
+			player.sendTextMessage("Interval not changed (already " + intervalSeconds + "s).");
 			return;
 		}
-		player.sendTextMessage("Snapshot and spawn pose updated (spawn at your position).");
+		repository.setIntervalSeconds(saved.respawnId(), intervalSeconds);
+		player.sendTextMessage("Interval updated to " + intervalSeconds + "s (#" + saved.respawnId() + ").");
 	}
 
 	private void now(Player player, Npc npc) {
@@ -447,5 +584,12 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 	@FunctionalInterface
 	private interface NpcHandler {
 		void handle(Player player, Npc npc);
+	}
+
+	private enum UpdateMode {
+		SNAPSHOT, POSE, ALL, TIMER
+	}
+
+	private record UpdateRequest(Long respawnId, UpdateMode mode, Integer timerMinutes) {
 	}
 }

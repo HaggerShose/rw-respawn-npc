@@ -17,8 +17,8 @@ This is not a perfect clone: every readable field is stored, but only fields wit
 Notes:
 
 - The snapshot is taken at register / `/respawn-update` time, never on death.
-- Spawn pose comes from the admin's position and rotation, not from where the NPC was standing.
-- `/respawn-update` refreshes both the snapshot and the spawn pose from where you stand.
+- Spawn pose comes from the admin's position and rotation at register (or `/respawn-update pose` / `all`).
+- Default `/respawn-update` only refreshes the NPC snapshot; spawn pose stays.
 - While a timer is already running, further deaths do not restart it.
 - Respawn itself is silent (no broadcast).
 - Only the admin who runs a command gets chat feedback.
@@ -27,29 +27,35 @@ Notes:
 
 Admin only (`Server_Admins` in `server.properties`).
 
-Target the NPC first (except `/respawn-list`), then use chat or the `^` console **with** a leading `/`.
+Target the NPC first (except `/respawn-list` and `#id` update forms), then use chat or the `^` console **with** a leading `/`.
 
-| Command                   | Effect                                                                                               |
-| ------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `/make-respawn <minutes>` | Register the target NPC. NPC state = snapshot; your pose = spawn. Already registered: interval only. |
-| `/respawn-update`         | Save the current live NPC as the new snapshot and your pose as the new spawn (pending timer stays).  |
-| `/respawn-now`            | Spawn immediately. If the NPC is still alive, it is deleted (no corpse) after a successful spawn.    |
-| `/respawn-remove`         | Unregister. The living NPC stays.                                                                    |
-| `/respawn-info`           | Show interval, pending state, remaining time, spawn/current position.                                |
-| `/respawn-list`           | List all registered NPCs.                                                                            |
+| Command                           | Effect                                                                                                               |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `/make-respawn <minutes>`         | Register the target NPC. NPC state = snapshot; your pose = spawn. Already registered: error (use `/respawn-update`). |
+| `/respawn-update`                 | Snapshot only (attributes of the live NPC).                                                                          |
+| `/respawn-update pose`            | Spawn pose only (your position/rotation).                                                                            |
+| `/respawn-update all`             | Snapshot + spawn pose.                                                                                               |
+| `/respawn-update timer <minutes>` | Interval only.                                                                                                       |
+| `/respawn-update #2 ...`          | Same modes, target by respawn id (no LoS needed).                                                                    |
+| `/respawn-now`                    | Spawn immediately. If the NPC is still alive, it is deleted (no corpse) after a successful spawn.                    |
+| `/respawn-remove`                 | Unregister. The living NPC stays.                                                                                    |
+| `/respawn-info`                   | Show interval, pending state, remaining time, spawn/current position.                                                |
+| `/respawn-list`                   | List all registered NPCs.                                                                                            |
+
+Optional `snapshot` token: `/respawn-update snapshot` equals bare `/respawn-update`.
 
 ### Interval
 
 - `<minutes>` is the delay after death until respawn.
-- `0` (or less) -> **5 seconds** (for testing).
+- `0` (or less) -> short test delay (see plugin constant).
 - Maximum: **24 hours** (`1440` minutes).
 
 ### Rules
 
 - Transient NPCs cannot be registered.
-- Target = LoS first, else nearest NPC within 10 blocks.
-- `/make-respawn` on an already registered NPC only changes the interval (same interval = no-op). A pending timer is not restarted.
+- Target = LoS first, else nearest NPC within 10 blocks (unless `#id` is given).
 - On respawn the **saved** pose and snapshot are used, not the death location or corpse state.
+- Snapshot update needs a living NPC; pose/timer work with `#id` even if the current body is missing.
 
 ## Install
 

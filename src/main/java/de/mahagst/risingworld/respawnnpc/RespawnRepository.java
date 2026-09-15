@@ -173,12 +173,11 @@ final class RespawnRepository {
 		return Optional.empty();
 	}
 
-	/** Snapshot + spawn pose; interval, pending, and current npc id stay. */
+	/** Snapshot attributes only; spawn pose, interval, pending, and current npc id stay. */
 	boolean replaceSnapshot(RespawnNpc npc) {
 		var sql = """
 				UPDATE respawn_npcs SET
 				  type_id = ?, variant = ?, type_name = ?,
-				  pos_x = ?, pos_y = ?, pos_z = ?, rot_x = ?, rot_y = ?, rot_z = ?, rot_w = ?,
 				  name = ?, health = ?, hunger = ?, thirst = ?, taming = ?, age = ?,
 				  behaviour = ?, behaviour_overridden = ?, attack_reaction = ?, attack_reaction_overridden = ?,
 				  group_id = ?, locked = ?, npc_static = ?, invincible = ?, invisible = ?,
@@ -197,15 +196,32 @@ final class RespawnRepository {
 			prep.setInt(i++, npc.typeId());
 			prep.setInt(i++, npc.variant());
 			prep.setString(i++, npc.typeName());
-			prep.setFloat(i++, npc.posX());
-			prep.setFloat(i++, npc.posY());
-			prep.setFloat(i++, npc.posZ());
-			prep.setFloat(i++, npc.rotX());
-			prep.setFloat(i++, npc.rotY());
-			prep.setFloat(i++, npc.rotZ());
-			prep.setFloat(i++, npc.rotW());
 			i = bindSnapshotBody(prep, i, npc);
 			prep.setLong(i, npc.respawnId());
+			prep.executeUpdate();
+			return true;
+		} catch (SQLException e) {
+			e.printStackTrace();
+			return false;
+		}
+	}
+
+	boolean setSpawnPose(long respawnId, float posX, float posY, float posZ,
+			float rotX, float rotY, float rotZ, float rotW) {
+		var sql = """
+				UPDATE respawn_npcs SET
+				  pos_x = ?, pos_y = ?, pos_z = ?, rot_x = ?, rot_y = ?, rot_z = ?, rot_w = ?
+				WHERE respawn_id = ?
+				""";
+		try (var prep = database.getConnection().prepareStatement(sql)) {
+			prep.setFloat(1, posX);
+			prep.setFloat(2, posY);
+			prep.setFloat(3, posZ);
+			prep.setFloat(4, rotX);
+			prep.setFloat(5, rotY);
+			prep.setFloat(6, rotZ);
+			prep.setFloat(7, rotW);
+			prep.setLong(8, respawnId);
 			prep.executeUpdate();
 			return true;
 		} catch (SQLException e) {
