@@ -5,14 +5,11 @@ import java.util.HashMap;
 import java.util.Map;
 
 import net.risingworld.api.objects.Npc;
+import net.risingworld.api.utils.Quaternion;
 import net.risingworld.api.utils.Vector3f;
 
-/**
- * Runtime guard state. Posts live in RAM; DB is only for load/save.
- * Hot path (respawn body swap) never hits SQLite.
- */
+/** Runtime guard posts. RAM only on the hot path; DB is load/save. */
 public final class GuardService {
-	/** respawn_id -> guard post (RAM mirror of guard_posts) */
 	private final Map<Long, GuardPost> posts = new HashMap<>();
 
 	public void loadPosts(Collection<GuardPost> all) {
@@ -26,51 +23,46 @@ public final class GuardService {
 		return posts.containsKey(respawnId);
 	}
 
+	public GuardPost getPost(long respawnId) {
+		return posts.get(respawnId);
+	}
+
 	public Collection<GuardPost> allPosts() {
 		return posts.values();
 	}
 
-	/** Remember post in RAM and send NPC there. Caller persists to DB. */
-	public void putAndBind(GuardPost post, Npc npc) {
+	public void putPost(GuardPost post) {
 		posts.put(post.respawnId(), post);
-		bind(post, npc);
 	}
 
-	/** Remove from RAM. Caller deletes from DB. */
 	public void removePost(long respawnId) {
 		posts.remove(respawnId);
-	}
-
-	/**
-	 * After body swap: if this respawn has a post in RAM, walk the new NPC there.
-	 * No-op (and no DB) when there is no post.
-	 */
-	public void onBodyReplaced(long respawnId, Npc npc) {
-		GuardPost post = posts.get(respawnId);
-		if (post == null) {
-			return;
-		}
-		bind(post, npc);
 	}
 
 	public void stop() {
 		posts.clear();
 	}
 
-	private void bind(GuardPost post, Npc npc) {
-		if (npc == null || npc.isDead()) {
+	/** Facing + lock. No setPosition. */
+	public void arrive(Npc npc, GuardPost post) {
+		if (npc == null || npc.isDead() || post == null) {
 			return;
 		}
-		sendToPost(npc, post.x(), post.y(), post.z());
+		npc.setRotation(new Quaternion().fromAngles(0f, post.yaw(), 0f));
+		npc.setLocked(true);
 	}
 
-	private static void sendToPost(Npc npc, float x, float y, float z) {
+	/** Unlock if needed, then moveTo. */
+	public void sendToPost(Npc npc, GuardPost post) {
+		if (npc == null || npc.isDead() || post == null) {
+			return;
+		}
 		if (npc.isLocked()) {
 			npc.setLocked(false);
 		}
 		if (npc.isStatic()) {
 			npc.setStatic(false);
 		}
-		npc.moveTo(new Vector3f(x, y, z));
+		npc.moveTo(new Vector3f(post.x(), post.y(), post.z()));
 	}
 }

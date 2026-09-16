@@ -32,9 +32,10 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 
 	@Override
 	public void onEnable() {
-		database = getSQLiteConnection(getPath() + "/respawn.db");
+		String dbFile = worldDbFileName();
+		database = getSQLiteConnection(getPath() + "/" + dbFile);
 		if (database == null) {
-			System.out.println("[RespawnNpc] Failed to open SQLite database");
+			System.out.println("[RespawnNpc] Failed to open SQLite database: " + dbFile);
 			return;
 		}
 		repository = new RespawnRepository(database);
@@ -45,7 +46,7 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 		respawn.enable();
 		guard.enable();
 		registerEventListener(this);
-		System.out.println("[RespawnNpc] enabled");
+		System.out.println("[RespawnNpc] enabled (" + dbFile + ")");
 	}
 
 	@Override
@@ -326,6 +327,22 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 			}
 		}
 		return best;
+	}
+
+	/**
+	 * One SQLite file per world: {@code <World.getName()>.db}.
+	 * Path-unsafe characters become {@code _}.
+	 */
+	private static String worldDbFileName() {
+		String name = World.getName();
+		if (name == null || name.isBlank()) {
+			return "world.db";
+		}
+		String safe = name.trim().replaceAll("[\\\\/:*?\"<>|]", "_");
+		if (safe.isBlank()) {
+			return "world.db";
+		}
+		return safe + ".db";
 	}
 
 	@FunctionalInterface

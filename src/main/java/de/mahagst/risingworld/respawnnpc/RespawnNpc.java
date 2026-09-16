@@ -3,6 +3,7 @@ package de.mahagst.risingworld.respawnnpc;
 /**
  * One registered respawn NPC. nextRespawn null = idle (alive / no pending timer).
  * Spawn pose is register-time; snapshot fields change only on register / update.
+ * yaw is degrees (horizontal facing only).
  */
 record RespawnNpc(
 		long respawnId,
@@ -13,10 +14,7 @@ record RespawnNpc(
 		float posX,
 		float posY,
 		float posZ,
-		float rotX,
-		float rotY,
-		float rotZ,
-		float rotW,
+		float yaw,
 		int intervalSeconds,
 		Long nextRespawn,
 		long createdAt,

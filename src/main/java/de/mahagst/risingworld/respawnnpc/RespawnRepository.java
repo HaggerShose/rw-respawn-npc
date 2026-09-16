@@ -12,7 +12,7 @@ import java.util.Optional;
 import de.mahagst.risingworld.respawnnpc.guard.GuardPost;
 import net.risingworld.api.database.Database;
 
-/** SQLite persistence for respawn_npcs + guard_posts (one respawn.db). */
+/** SQLite persistence for respawn_npcs + guard_posts (one db file per world). */
 public final class RespawnRepository {
 	private final Database database;
 
@@ -33,10 +33,7 @@ public final class RespawnRepository {
 				  pos_x REAL NOT NULL,
 				  pos_y REAL NOT NULL,
 				  pos_z REAL NOT NULL,
-				  rot_x REAL NOT NULL,
-				  rot_y REAL NOT NULL,
-				  rot_z REAL NOT NULL,
-				  rot_w REAL NOT NULL,
+				  yaw REAL NOT NULL,
 				  interval_seconds INTEGER NOT NULL,
 				  next_respawn INTEGER,
 				  created_at INTEGER NOT NULL,
@@ -89,17 +86,10 @@ public final class RespawnRepository {
 				  pos_x REAL NOT NULL,
 				  pos_y REAL NOT NULL,
 				  pos_z REAL NOT NULL,
-				  rot_x REAL NOT NULL DEFAULT 0,
-				  rot_y REAL NOT NULL DEFAULT 0,
-				  rot_z REAL NOT NULL DEFAULT 0,
-				  rot_w REAL NOT NULL DEFAULT 1,
+				  yaw REAL NOT NULL DEFAULT 0,
 				  FOREIGN KEY (respawn_id) REFERENCES respawn_npcs(respawn_id) ON DELETE CASCADE
 				)
 				""");
-		SqliteSchema.ensureColumn(database, "guard_posts", "rot_x", "REAL NOT NULL DEFAULT 0");
-		SqliteSchema.ensureColumn(database, "guard_posts", "rot_y", "REAL NOT NULL DEFAULT 0");
-		SqliteSchema.ensureColumn(database, "guard_posts", "rot_z", "REAL NOT NULL DEFAULT 0");
-		SqliteSchema.ensureColumn(database, "guard_posts", "rot_w", "REAL NOT NULL DEFAULT 1");
 	}
 
 	public Optional<RespawnNpc> find(long respawnId) {
@@ -150,7 +140,7 @@ public final class RespawnRepository {
 		var sql = """
 				INSERT INTO respawn_npcs (
 				  current_npc_id, type_id, variant, type_name,
-				  pos_x, pos_y, pos_z, rot_x, rot_y, rot_z, rot_w,
+				  pos_x, pos_y, pos_z, yaw,
 				  interval_seconds, next_respawn, created_at,
 				  name, health, hunger, thirst, taming, age,
 				  behaviour, behaviour_overridden, attack_reaction, attack_reaction_overridden,
@@ -162,7 +152,7 @@ public final class RespawnRepository {
 				  sec_type_id, sec_variant, sec_status, sec_value, sec_durability, sec_modifier,
 				  pregnant
 				) VALUES (
-				  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+				  ?, ?, ?, ?, ?, ?, ?, ?,
 				  ?, ?, ?,
 				  ?, ?, ?, ?, ?, ?,
 				  ?, ?, ?, ?,
@@ -222,22 +212,18 @@ public final class RespawnRepository {
 		}
 	}
 
-	boolean setSpawnPose(long respawnId, float posX, float posY, float posZ,
-			float rotX, float rotY, float rotZ, float rotW) {
+	boolean setSpawnPose(long respawnId, float posX, float posY, float posZ, float yaw) {
 		var sql = """
 				UPDATE respawn_npcs SET
-				  pos_x = ?, pos_y = ?, pos_z = ?, rot_x = ?, rot_y = ?, rot_z = ?, rot_w = ?
+				  pos_x = ?, pos_y = ?, pos_z = ?, yaw = ?
 				WHERE respawn_id = ?
 				""";
 		try (var prep = database.getConnection().prepareStatement(sql)) {
 			prep.setFloat(1, posX);
 			prep.setFloat(2, posY);
 			prep.setFloat(3, posZ);
-			prep.setFloat(4, rotX);
-			prep.setFloat(5, rotY);
-			prep.setFloat(6, rotZ);
-			prep.setFloat(7, rotW);
-			prep.setLong(8, respawnId);
+			prep.setFloat(4, yaw);
+			prep.setLong(5, respawnId);
 			prep.executeUpdate();
 			return true;
 		} catch (SQLException e) {
@@ -293,7 +279,7 @@ public final class RespawnRepository {
 	public List<GuardPost> findAllGuardPosts() {
 		var list = new ArrayList<GuardPost>();
 		var sql = """
-				SELECT respawn_id, pos_x, pos_y, pos_z, rot_x, rot_y, rot_z, rot_w
+				SELECT respawn_id, pos_x, pos_y, pos_z, yaw
 				FROM guard_posts
 				""";
 		try (var prep = database.getConnection().prepareStatement(sql);
@@ -307,36 +293,22 @@ public final class RespawnRepository {
 		return list;
 	}
 
-	public boolean setGuardPost(
-			long respawnId,
-			float x,
-			float y,
-			float z,
-			float rotX,
-			float rotY,
-			float rotZ,
-			float rotW) {
+	public boolean setGuardPost(long respawnId, float x, float y, float z, float yaw) {
 		var sql = """
-				INSERT INTO guard_posts (respawn_id, pos_x, pos_y, pos_z, rot_x, rot_y, rot_z, rot_w)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+				INSERT INTO guard_posts (respawn_id, pos_x, pos_y, pos_z, yaw)
+				VALUES (?, ?, ?, ?, ?)
 				ON CONFLICT(respawn_id) DO UPDATE SET
 				  pos_x = excluded.pos_x,
 				  pos_y = excluded.pos_y,
 				  pos_z = excluded.pos_z,
-				  rot_x = excluded.rot_x,
-				  rot_y = excluded.rot_y,
-				  rot_z = excluded.rot_z,
-				  rot_w = excluded.rot_w
+				  yaw = excluded.yaw
 				""";
 		try (var prep = database.getConnection().prepareStatement(sql)) {
 			prep.setLong(1, respawnId);
 			prep.setFloat(2, x);
 			prep.setFloat(3, y);
 			prep.setFloat(4, z);
-			prep.setFloat(5, rotX);
-			prep.setFloat(6, rotY);
-			prep.setFloat(7, rotZ);
-			prep.setFloat(8, rotW);
+			prep.setFloat(5, yaw);
 			return prep.executeUpdate() > 0;
 		} catch (SQLException e) {
 			e.printStackTrace();
@@ -361,10 +333,7 @@ public final class RespawnRepository {
 				result.getFloat("pos_x"),
 				result.getFloat("pos_y"),
 				result.getFloat("pos_z"),
-				result.getFloat("rot_x"),
-				result.getFloat("rot_y"),
-				result.getFloat("rot_z"),
-				result.getFloat("rot_w"));
+				result.getFloat("yaw"));
 	}
 
 	private static void bindInsert(PreparedStatement prep, RespawnNpc npc) throws SQLException {
@@ -376,10 +345,7 @@ public final class RespawnRepository {
 		prep.setFloat(i++, npc.posX());
 		prep.setFloat(i++, npc.posY());
 		prep.setFloat(i++, npc.posZ());
-		prep.setFloat(i++, npc.rotX());
-		prep.setFloat(i++, npc.rotY());
-		prep.setFloat(i++, npc.rotZ());
-		prep.setFloat(i++, npc.rotW());
+		prep.setFloat(i++, npc.yaw());
 		prep.setInt(i++, npc.intervalSeconds());
 		setNullableLong(prep, i++, npc.nextRespawn());
 		prep.setLong(i++, npc.createdAt());
@@ -443,10 +409,7 @@ public final class RespawnRepository {
 				result.getFloat("pos_x"),
 				result.getFloat("pos_y"),
 				result.getFloat("pos_z"),
-				result.getFloat("rot_x"),
-				result.getFloat("rot_y"),
-				result.getFloat("rot_z"),
-				result.getFloat("rot_w"),
+				result.getFloat("yaw"),
 				result.getInt("interval_seconds"),
 				next,
 				result.getLong("created_at"),

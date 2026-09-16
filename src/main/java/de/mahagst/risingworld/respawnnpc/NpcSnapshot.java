@@ -6,7 +6,6 @@ import net.risingworld.api.objects.Clothes;
 import net.risingworld.api.objects.Item;
 import net.risingworld.api.objects.Npc;
 import net.risingworld.api.objects.Skin;
-import net.risingworld.api.utils.Quaternion;
 import net.risingworld.api.utils.Vector3f;
 
 /**
@@ -19,12 +18,12 @@ final class NpcSnapshot {
 
 	/**
 	 * @param spawnPos spawn pose position (typically the admin's position)
-	 * @param spawnRot spawn pose rotation (typically the admin's rotation)
+	 * @param yaw horizontal facing in degrees (typically the admin's yaw)
 	 */
 	static RespawnNpc capture(
 			Npc npc,
 			Vector3f spawnPos,
-			Quaternion spawnRot,
+			float yaw,
 			long respawnId,
 			int intervalSeconds,
 			Long nextRespawn,
@@ -32,10 +31,6 @@ final class NpcSnapshot {
 		Vector3f pos = spawnPos != null ? spawnPos : npc.getPosition();
 		if (pos == null) {
 			pos = new Vector3f(0f, 0f, 0f);
-		}
-		Quaternion rot = spawnRot != null ? spawnRot : npc.getRotation();
-		if (rot == null) {
-			rot = Quaternion.IDENTITY;
 		}
 		Npcs.NpcDefinition def = npc.getDefinition();
 		String typeName = Short.toString(npc.getTypeID());
@@ -80,10 +75,7 @@ final class NpcSnapshot {
 				pos.x,
 				pos.y,
 				pos.z,
-				rot.x,
-				rot.y,
-				rot.z,
-				rot.w,
+				yaw,
 				intervalSeconds,
 				nextRespawn,
 				createdAt,

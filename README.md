@@ -13,7 +13,7 @@ This is not a perfect clone: every readable field is stored, but only fields wit
 3. Run `/make-respawn <minutes>`.
 4. When that NPC dies, a one-shot timer starts.
 5. When the timer ends, a new NPC is spawned at the **saved player pose** and the snapshot is applied.
-6. Optional: if a guard post is set, the NPC walks there shortly after spawn.
+6. Optional: if a guard post is set, the NPC walks there shortly after spawn and locks facing on arrival.
 
 Notes:
 
@@ -43,7 +43,7 @@ Target the NPC first (except `/respawn-list` and optional `#id` / `id` forms), t
 | `/respawn-remove [#id]`           | Unregister. The living NPC stays.                                                                                    |
 | `/respawn-info [#id]`             | Show interval, pending state, remaining time, spawn/current position.                                                |
 | `/respawn-list`                   | List all registered NPCs.                                                                                            |
-| `/make-guard <id>`                | Guard post = your position (+ rotation stored). Living NPC walks there once.                                         |
+| `/make-guard <id>`                | Guard post = your position (+ rotation). NPC walks there, then faces and locks.                                      |
 | `/guard-remove <id>`              | Clear guard post. NPC stays put.                                                                                     |
 
 Optional `snapshot` token: `/respawn-update snapshot` equals bare `/respawn-update`.
@@ -74,9 +74,10 @@ Plugins/RespawnNpc/RespawnNpc.jar
 State is stored automatically in:
 
 ```text
-Plugins/RespawnNpc/respawn.db
+Plugins/RespawnNpc/<WorldName>.db
 ```
 
+Each world gets its own SQLite file (from `World.getName()`).
 On startup, overdue respawns run immediately. If a registered NPC is missing (e.g. after a crash mid-death), it is spawned again.
 
 ## License

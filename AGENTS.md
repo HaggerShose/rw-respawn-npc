@@ -17,7 +17,7 @@ NpcSnapshot        -- capture / apply settable fields
 SqliteSchema       -- ensureColumn for schema evolution
 ```
 
-Wiring on enable: open `respawn.db` -> createSchema -> `RespawnService` + `GuardFeature` -> `setGuardHooks(onBodyReplaced, onRespawnRemoved)` -> enable both -> register plugin command listener.
+Wiring on enable: open `<World.getName()>.db` -> createSchema -> `RespawnService` + `GuardFeature` -> `setGuardHooks(onBodyReplaced, onRespawnRemoved)` -> enable both -> register plugin command listener.
 
 No second plugin, no `AdminAccess` class, no separate guard.db.
 
@@ -32,7 +32,8 @@ No second plugin, no `AdminAccess` class, no separate guard.db.
 6. NPC dies (NpcDeathEvent, not cancelled)
 7. One-shot timer (if none pending)
 8. Timer -> spawnNpc at spawn pose -> apply snapshot -> rebind npc id
-9. If guard post exists: after ~0.5s moveTo(guard xyz)  -- delay avoids same-tick slide
+9. If guard post exists: after ~2s `moveTo`, start distance watch
+10. Near post (`dist <= 0.1`): setRotation + setLocked(true). No setPosition. Stuck ignored for now.
 ```
 
 No continuous poll. Death never overwrites the snapshot. Players install nothing.
@@ -57,7 +58,7 @@ No name clash with RespawnChest (`/make-refill`, `/refill-*`).
 | `/respawn-remove [#id]`           | Drop DB row + timer + guard post (FK CASCADE + RAM clear). Living NPC stays.                 |
 | `/respawn-info [#id]`             | Interval, pending, spawn/current pos, type/name.                                             |
 | `/respawn-list`                   | All entries.                                                                                 |
-| `/make-guard <id>`                | Guard post = your xyz + rotation (stored). Living NPC `moveTo` once. Facing not applied yet. |
+| `/make-guard <id>`                | Guard post = your xyz + rotation. Living NPC walks there; on arrive facing+lock.             |
 | `/guard-remove <id>`              | Clear guard post. NPC not moved.                                                             |
 
 Focus: LoS 10f, else nearest non-transient within 10. Optional `#id` or bare `id` for `now` / `remove` / `info` / guard. `/respawn-update` id form is `#id` only. `/make-respawn` always needs focus. `/respawn-list` lists all.
@@ -66,18 +67,18 @@ Reject: transient; no focus (except list / id forms); `/make-respawn` without mi
 
 Interval: `0` or less -> `MIN_TEST_SECONDS`. Else `minutes * 60`, cap **86400**. Stored as `interval_seconds`.
 
-**Not in scope yet:** loot tables, admin UI, always-on periodic respawn, corpse cleanup, guard fight/return/leash, applying guard rotation on arrival.
+**Not in scope yet:** loot tables, admin UI, always-on periodic respawn, corpse cleanup, guard fight/return/leash.
 
 ## API notes
 
-- Spawn pose from admin at register / `pose` / `all` (not from the NPC).
+- Spawn pose from admin at register / `pose` / `all` (not from the NPC). DB stores yaw degrees only; spawn/arrive use `fromAngles(0, yaw, 0)`.
 - Spawn: `World.spawnNpc(typeID, variant, position, rotation, false)` (persistent).
 - Apply only fields with setters. Secondary item + pregnant: capture-only.
 - Clothes serialize/deserialize; skin null-safe for animals; equipped with Modifier.
 - Behaviour / attack reaction: `set*` if overridden flag saved, else `reset*`.
 - `/respawn-now`: ignore death from that `delete()` via `ignoringDeathNpcIds`.
 - Commands: single `PlayerCommandEvent` on the plugin; `setCancelled(true)` when handled.
-- Guard: `Npc.moveTo`; unlock/static temporarily for the walk (not written back into snapshot). After respawn, delay ~0.5s before `moveTo`.
+- Guard: after spawn wait ~2s, then `moveTo` (unlock if locked/static). Distance watch only while walking (`clamp(0.1, 2.0, 0.05 * dist^2)`). Arrive `dist <= 0.1`: yaw + `setLocked(true)` only -- no `setPosition`, no stuck handling. `/guard-remove` / `/respawn-remove` kill the watch.
 
 ```text
 NpcDeathEvent (RespawnService)
@@ -90,7 +91,7 @@ At most one pending `Timer` per `respawn_id`. Startup: load map; overdue/missing
 
 ## Persistence: SQLite
 
-One file: `getPath() + "/respawn.db"`. `PRAGMA foreign_keys = ON`, `journal_mode=DELETE`. Checkpoint on disable.
+One file per world: `getPath() + "/" + World.getName() + ".db"` (path-unsafe chars in the name become `_`). `PRAGMA foreign_keys = ON`, `journal_mode=DELETE`. Checkpoint on disable.
 
 RAM map `current_npc_id -> respawn_id` for death filter. Guard posts: RAM map in `GuardService` (hot path); DB only on enable load / make / remove.
 
@@ -98,7 +99,7 @@ RAM map `current_npc_id -> respawn_id` for death filter. Guard posts: RAM map in
 respawn_npcs:
   respawn_id PK AUTOINCREMENT,
   current_npc_id, type_id, variant, type_name,
-  pos_x/y/z, rot_x/y/z/w,          -- spawn pose (admin)
+  pos_x/y/z, yaw,                  -- spawn pose (admin; yaw degrees)
   interval_seconds, next_respawn, created_at,
   -- snapshot: name, health, hunger, thirst, taming, age,
   behaviour*, attack_reaction*, group_id,
@@ -108,12 +109,12 @@ respawn_npcs:
 
 guard_posts:
   respawn_id PK FK -> respawn_npcs ON DELETE CASCADE,
-  pos_x/y/z, rot_x/y/z/w           -- guard post (independent of spawn pose)
+  pos_x/y/z, yaw                   -- guard post (independent of spawn pose)
 ```
 
 ### Schema evolution
 
-No migration runner. `CREATE TABLE IF NOT EXISTS` + permanent `SqliteSchema.ensureColumn` for columns added later (e.g. guard `rot_*`). Copy from [`_tools/templates/SqliteSchema.java`](../_tools/templates/SqliteSchema.java) if regenerating.
+No migration runner. `CREATE TABLE IF NOT EXISTS` + permanent `SqliteSchema.ensureColumn` for columns added later. Copy from [`_tools/templates/SqliteSchema.java`](../_tools/templates/SqliteSchema.java) if regenerating.
 
 ## Build / Setup
 

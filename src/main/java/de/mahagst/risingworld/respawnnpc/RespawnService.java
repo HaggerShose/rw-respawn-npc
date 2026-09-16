@@ -103,13 +103,13 @@ public final class RespawnService implements Listener {
 			return;
 		}
 		Vector3f spawnPos = player.getPosition();
-		Quaternion spawnRot = player.getRotation();
-		if (spawnPos == null || spawnRot == null) {
+		Quaternion playerRot = player.getRotation();
+		if (spawnPos == null || playerRot == null) {
 			player.sendTextMessage("Could not read player position.");
 			return;
 		}
 		RespawnNpc snapshot = NpcSnapshot.capture(
-				npc, spawnPos, spawnRot, 0L, intervalSeconds, null, System.currentTimeMillis());
+				npc, spawnPos, playerRot.getYaw(), 0L, intervalSeconds, null, System.currentTimeMillis());
 		Optional<Long> id = repository.insert(snapshot);
 		if (id.isEmpty()) {
 			player.sendTextMessage("Could not save respawn NPC.");
@@ -214,11 +214,10 @@ public final class RespawnService implements Listener {
 			return false;
 		}
 		Vector3f keepPos = new Vector3f(saved.posX(), saved.posY(), saved.posZ());
-		Quaternion keepRot = new Quaternion(saved.rotX(), saved.rotY(), saved.rotZ(), saved.rotW());
 		RespawnNpc snapshot = NpcSnapshot.capture(
 				live,
 				keepPos,
-				keepRot,
+				saved.yaw(),
 				saved.respawnId(),
 				saved.intervalSeconds(),
 				saved.nextRespawn(),
@@ -235,8 +234,8 @@ public final class RespawnService implements Listener {
 
 	private boolean updatePose(Player player, RespawnNpc saved, boolean quietSuccess) {
 		Vector3f spawnPos = player.getPosition();
-		Quaternion spawnRot = player.getRotation();
-		if (spawnPos == null || spawnRot == null) {
+		Quaternion playerRot = player.getRotation();
+		if (spawnPos == null || playerRot == null) {
 			player.sendTextMessage("Could not read player position.");
 			return false;
 		}
@@ -245,10 +244,7 @@ public final class RespawnService implements Listener {
 				spawnPos.x,
 				spawnPos.y,
 				spawnPos.z,
-				spawnRot.x,
-				spawnRot.y,
-				spawnRot.z,
-				spawnRot.w)) {
+				playerRot.getYaw())) {
 			player.sendTextMessage("Could not save spawn pose.");
 			return false;
 		}
@@ -281,7 +277,7 @@ public final class RespawnService implements Listener {
 		Npc living = World.getNpc(saved.currentNpcId());
 		boolean livingExists = living != null && !living.isDead();
 		Vector3f pos = new Vector3f(saved.posX(), saved.posY(), saved.posZ());
-		Quaternion rot = new Quaternion(saved.rotX(), saved.rotY(), saved.rotZ(), saved.rotW());
+		Quaternion rot = new Quaternion().fromAngles(0f, saved.yaw(), 0f);
 		Npc spawned = World.spawnNpc(saved.typeId(), saved.variant(), pos, rot, false);
 		if (spawned == null) {
 			System.out.println("[RespawnNpc] spawnNpc returned null for #" + saved.respawnId());
