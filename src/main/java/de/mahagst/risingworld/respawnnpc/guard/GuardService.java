@@ -43,13 +43,28 @@ public final class GuardService {
 		posts.clear();
 	}
 
-	/** Facing + lock. No setPosition. */
-	public void arrive(Npc npc, GuardPost post) {
-		if (npc == null || npc.isDead() || post == null) {
+	/**
+	 * Horizontal yaw (degrees) from camera look, pitch ignored.
+	 * Falls back to body yaw if looking straight up/down.
+	 */
+	public static float lookYaw(Vector3f viewDirection, Quaternion bodyRotation) {
+		if (viewDirection != null) {
+			float x = viewDirection.x;
+			float z = viewDirection.z;
+			float lenSq = x * x + z * z;
+			if (lenSq >= 1e-8f) {
+				float inv = 1f / (float) Math.sqrt(lenSq);
+				return new Quaternion().lookAt(x * inv, 0f, z * inv).getYaw();
+			}
+		}
+		return bodyRotation == null ? 0f : bodyRotation.getYaw();
+	}
+
+	public static void faceYaw(Npc npc, float yaw) {
+		if (npc == null || npc.isDead()) {
 			return;
 		}
-		npc.setRotation(new Quaternion().fromAngles(0f, post.yaw(), 0f));
-		npc.setLocked(true);
+		npc.setRotation(new Quaternion().fromAngles(0f, yaw, 0f));
 	}
 
 	/** Unlock if needed, then moveTo. */

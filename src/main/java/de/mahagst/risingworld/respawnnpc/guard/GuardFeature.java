@@ -16,20 +16,22 @@ import net.risingworld.api.utils.Quaternion;
 import net.risingworld.api.utils.Vector3f;
 
 /**
- * Guard runtime: after respawn wait, moveTo post, poll distance until near, then rotation + lock.
+ * Guard: spawn settle -> moveTo -> distance ticks -> turn in steps -> lock.
  */
 public final class GuardFeature {
 	private static final float WALK_AFTER_SPAWN_SECONDS = 2f;
 	private static final float ARRIVE_DIST = 0.1f;
 	private static final float MIN_INTERVAL = 0.1f;
 	private static final float MAX_INTERVAL = 2f;
+	private static final int TURN_STEPS = 8;
+	private static final float TURN_STEP_SECONDS = 0.05f;
+	private static final float LOCK_AFTER_TURN_SECONDS = 0.15f;
 
 	private final Plugin plugin;
 	private final RespawnRepository repository;
 	private final LongFunction<Optional<Npc>> livingNpcByRespawnId;
 
 	private final GuardService service = new GuardService();
-	/** Active walks only: respawn_id -> approach state. */
 	private final Map<Long, Approach> approaches = new HashMap<>();
 
 	public GuardFeature(
@@ -60,7 +62,7 @@ public final class GuardFeature {
 		service.stop();
 	}
 
-	/** After respawn: wait, then moveTo + distance watch. */
+	/** After respawn body: wait, then walk to post. */
 	public void onBodyReplaced(long respawnId, Npc npc) {
 		if (!service.hasPost(respawnId)) {
 			stopApproach(respawnId);
@@ -87,12 +89,11 @@ public final class GuardFeature {
 		}
 		Npc live = liveOpt.get();
 		Vector3f pos = player.getPosition();
-		Quaternion playerRot = player.getRotation();
-		if (pos == null || playerRot == null) {
+		if (pos == null) {
 			player.sendTextMessage("Could not read player position.");
 			return;
 		}
-		float yaw = playerRot.getYaw();
+		float yaw = GuardService.lookYaw(player.getViewDirection(), player.getRotation());
 		if (!repository.setGuardPost(respawnId, pos.x, pos.y, pos.z, yaw)) {
 			player.sendTextMessage("Could not save guard post.");
 			return;
@@ -127,7 +128,6 @@ public final class GuardFeature {
 		delay.start();
 	}
 
-	/** moveTo + start distance polling. */
 	private void startWalk(long respawnId, long npcId) {
 		GuardPost post = service.getPost(respawnId);
 		Npc live = World.getNpc(npcId);
@@ -135,13 +135,12 @@ public final class GuardFeature {
 			stopApproach(respawnId);
 			return;
 		}
-		service.sendToPost(live, post);
 		float dist = horizontalDist(live, post);
 		if (dist <= ARRIVE_DIST) {
-			service.arrive(live, post);
-			stopApproach(respawnId);
+			finishArrive(respawnId, npcId, post);
 			return;
 		}
+		service.sendToPost(live, post);
 		Approach approach = new Approach(npcId, null);
 		approaches.put(respawnId, approach);
 		scheduleTick(respawnId, intervalFor(dist));
@@ -173,11 +172,64 @@ public final class GuardFeature {
 		}
 		float dist = horizontalDist(live, post);
 		if (dist <= ARRIVE_DIST) {
-			service.arrive(live, post);
-			stopApproach(respawnId);
+			finishArrive(respawnId, approach.npcId, post);
 			return;
 		}
 		scheduleTick(respawnId, intervalFor(dist));
+	}
+
+	/** Step-turn toward post yaw, then lock. API has no animated turn. */
+	private void finishArrive(long respawnId, long npcId, GuardPost post) {
+		Npc live = World.getNpc(npcId);
+		if (live == null || live.isDead()) {
+			stopApproach(respawnId);
+			return;
+		}
+		float fromYaw = 0f;
+		Quaternion rot = live.getRotation();
+		if (rot != null) {
+			fromYaw = rot.getYaw();
+		}
+		stopApproachTimer(approaches.get(respawnId));
+		turnStep(respawnId, npcId, fromYaw, post.yaw(), 1);
+	}
+
+	private void turnStep(long respawnId, long npcId, float fromYaw, float toYaw, int step) {
+		Npc live = World.getNpc(npcId);
+		if (live == null || live.isDead()) {
+			stopApproach(respawnId);
+			return;
+		}
+		float t = step / (float) TURN_STEPS;
+		GuardService.faceYaw(live, lerpYaw(fromYaw, toYaw, t));
+		if (step >= TURN_STEPS) {
+			Timer lockDelay = new Timer(1f, LOCK_AFTER_TURN_SECONDS, 0, () -> plugin.enqueue(() -> {
+				Npc still = World.getNpc(npcId);
+				if (still != null && !still.isDead()) {
+					still.setLocked(true);
+				}
+				stopApproach(respawnId);
+			}));
+			approaches.put(respawnId, new Approach(npcId, lockDelay));
+			lockDelay.start();
+			return;
+		}
+		Timer next = new Timer(1f, TURN_STEP_SECONDS, 0,
+				() -> plugin.enqueue(() -> turnStep(respawnId, npcId, fromYaw, toYaw, step + 1)));
+		approaches.put(respawnId, new Approach(npcId, next));
+		next.start();
+	}
+
+	/** Shortest-path lerp between two yaw angles (degrees). */
+	private static float lerpYaw(float from, float to, float t) {
+		float delta = to - from;
+		while (delta > 180f) {
+			delta -= 360f;
+		}
+		while (delta < -180f) {
+			delta += 360f;
+		}
+		return from + delta * t;
 	}
 
 	private void stopApproach(long respawnId) {
@@ -188,13 +240,15 @@ public final class GuardFeature {
 	}
 
 	private static void stopApproachTimer(Approach approach) {
+		if (approach == null) {
+			return;
+		}
 		if (approach.timer != null && !approach.timer.isKilled()) {
 			approach.timer.kill();
 		}
 		approach.timer = null;
 	}
 
-	/** {@code clamp(0.1, 2.0, 0.05 * dist^2)} */
 	private static float intervalFor(float dist) {
 		float interval = 0.05f * dist * dist;
 		if (interval < MIN_INTERVAL) {

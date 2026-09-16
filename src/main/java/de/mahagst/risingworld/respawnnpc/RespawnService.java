@@ -10,6 +10,7 @@ import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.LongConsumer;
 
+import de.mahagst.risingworld.respawnnpc.guard.GuardService;
 import net.risingworld.api.Plugin;
 import net.risingworld.api.Timer;
 import net.risingworld.api.World;
@@ -103,13 +104,13 @@ public final class RespawnService implements Listener {
 			return;
 		}
 		Vector3f spawnPos = player.getPosition();
-		Quaternion playerRot = player.getRotation();
-		if (spawnPos == null || playerRot == null) {
+		if (spawnPos == null) {
 			player.sendTextMessage("Could not read player position.");
 			return;
 		}
+		float yaw = GuardService.lookYaw(player.getViewDirection(), player.getRotation());
 		RespawnNpc snapshot = NpcSnapshot.capture(
-				npc, spawnPos, playerRot.getYaw(), 0L, intervalSeconds, null, System.currentTimeMillis());
+				npc, spawnPos, yaw, 0L, intervalSeconds, null, System.currentTimeMillis());
 		Optional<Long> id = repository.insert(snapshot);
 		if (id.isEmpty()) {
 			player.sendTextMessage("Could not save respawn NPC.");
@@ -234,17 +235,17 @@ public final class RespawnService implements Listener {
 
 	private boolean updatePose(Player player, RespawnNpc saved, boolean quietSuccess) {
 		Vector3f spawnPos = player.getPosition();
-		Quaternion playerRot = player.getRotation();
-		if (spawnPos == null || playerRot == null) {
+		if (spawnPos == null) {
 			player.sendTextMessage("Could not read player position.");
 			return false;
 		}
+		float yaw = GuardService.lookYaw(player.getViewDirection(), player.getRotation());
 		if (!repository.setSpawnPose(
 				saved.respawnId(),
 				spawnPos.x,
 				spawnPos.y,
 				spawnPos.z,
-				playerRot.getYaw())) {
+				yaw)) {
 			player.sendTextMessage("Could not save spawn pose.");
 			return false;
 		}
