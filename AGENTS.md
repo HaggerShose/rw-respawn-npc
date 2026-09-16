@@ -38,12 +38,12 @@ No command-name overlap with RespawnChest (`/make-refill`, `/refill-*`).
 | `/respawn-update all`             | Snapshot + spawn pose.                                                                                               |
 | `/respawn-update timer <minutes>` | Interval only (pending timer not restarted).                                                                         |
 | `/respawn-update #id ...`         | Same modes by respawn id (no LoS).                                                                                   |
-| `/respawn-now`                    | Spawn replacement immediately. If the current NPC still lives, delete it (no corpse) after a successful spawn.       |
-| `/respawn-remove`                 | Remove from DB, kill pending timer. Living NPC stays.                                                                |
-| `/respawn-info`                   | Interval, pending yes/no (+ remaining), spawn/current position, type/name                                            |
+| `/respawn-now [#id]`              | Spawn replacement immediately. If the current NPC still lives, delete it (no corpse) after a successful spawn.       |
+| `/respawn-remove [#id]`           | Remove from DB, kill pending timer. Living NPC stays.                                                                |
+| `/respawn-info [#id]`             | Interval, pending yes/no (+ remaining), spawn/current position, type/name                                            |
 | `/respawn-list`                   | All entries: id, type/name, alive/dead, current pos, spawn pos, pending                                              |
 
-Focus: `Player.getNpcInLineOfSight(10f, callback)`; if null, nearest non-transient NPC within 10 blocks (`World.getAllNpcs`). `#id` skips focus.
+Focus: `Player.getNpcInLineOfSight(10f, callback)`; if null, nearest non-transient NPC within 10 blocks (`World.getAllNpcs`). Optional `#id` / `id` skips focus (`/respawn-now|remove|info|update`). `/make-respawn` always uses focus. `/respawn-list` lists all.
 
 Reject:
 

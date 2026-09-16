@@ -27,7 +27,7 @@ Notes:
 
 Admin only (`Server_Admins` in `server.properties`).
 
-Target the NPC first (except `/respawn-list` and `#id` update forms), then use chat or the `^` console **with** a leading `/`.
+Target the NPC first (except `/respawn-list` and optional `#id` / `id` forms), then use chat or the `^` console **with** a leading `/`.
 
 | Command                           | Effect                                                                                                               |
 | --------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
@@ -37,12 +37,14 @@ Target the NPC first (except `/respawn-list` and `#id` update forms), then use c
 | `/respawn-update all`             | Snapshot + spawn pose.                                                                                               |
 | `/respawn-update timer <minutes>` | Interval only.                                                                                                       |
 | `/respawn-update #2 ...`          | Same modes, target by respawn id (no LoS needed).                                                                    |
-| `/respawn-now`                    | Spawn immediately. If the NPC is still alive, it is deleted (no corpse) after a successful spawn.                    |
-| `/respawn-remove`                 | Unregister. The living NPC stays.                                                                                    |
-| `/respawn-info`                   | Show interval, pending state, remaining time, spawn/current position.                                                |
+| `/respawn-now [#id]`              | Spawn immediately. If the NPC is still alive, it is deleted (no corpse) after a successful spawn.                    |
+| `/respawn-remove [#id]`           | Unregister. The living NPC stays.                                                                                    |
+| `/respawn-info [#id]`             | Show interval, pending state, remaining time, spawn/current position.                                                |
 | `/respawn-list`                   | List all registered NPCs.                                                                                            |
 
 Optional `snapshot` token: `/respawn-update snapshot` equals bare `/respawn-update`.
+
+`#id` and bare `id` both work for `now` / `remove` / `info` (and guard). `/respawn-update` keeps the `#id` form.
 
 ### Interval
 

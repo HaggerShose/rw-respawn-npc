@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
+import de.mahagst.risingworld.respawnnpc.guard.GuardFeature;
 import net.risingworld.api.Plugin;
 import net.risingworld.api.Timer;
 import net.risingworld.api.World;
@@ -35,6 +36,7 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 
 	private Database database;
 	private RespawnRepository repository;
+	private GuardFeature guard;
 	/** current npc id -> respawn_id */
 	private final Map<Long, Long> npcIdToRespawnId = new HashMap<>();
 	/** At most one pending RW timer per respawn_id. */
@@ -52,6 +54,8 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 		repository = new RespawnRepository(database);
 		repository.createSchema();
 		loadNpcMap();
+		guard = new GuardFeature(this, repository, this::livingNpcForRespawn);
+		guard.enable();
 		sweepAndResume();
 		registerEventListener(this);
 		System.out.println("[RespawnNpc] enabled");
@@ -60,6 +64,9 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 	@Override
 	public void onDisable() {
 		cancelAllTimers();
+		if (guard != null) {
+			guard.disable();
+		}
 		if (database != null) {
 			database.execute("PRAGMA wal_checkpoint(TRUNCATE)");
 			database.close();
@@ -85,9 +92,9 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 		switch (cmd) {
 			case "/make-respawn" -> makeRespawn(player, args);
 			case "/respawn-update" -> respawnUpdate(player, args);
-			case "/respawn-now" -> withFocused(player, this::now);
-			case "/respawn-remove" -> withFocused(player, this::remove);
-			case "/respawn-info" -> withFocused(player, this::info);
+			case "/respawn-now" -> respawnNow(player, args);
+			case "/respawn-remove" -> respawnRemove(player, args);
+			case "/respawn-info" -> respawnInfo(player, args);
 			case "/respawn-list" -> list(player);
 			default -> {
 			}
@@ -360,11 +367,7 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 		player.sendTextMessage("Interval updated to " + intervalSeconds + "s (#" + saved.respawnId() + ").");
 	}
 
-	private void now(Player player, Npc npc) {
-		RespawnNpc saved = requireRegistered(player, npc);
-		if (saved == null) {
-			return;
-		}
+	private void now(Player player, RespawnNpc saved) {
 		if (!spawnReplacement(saved)) {
 			player.sendTextMessage("Could not spawn replacement NPC.");
 			return;
@@ -372,22 +375,75 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 		player.sendTextMessage("NPC reset.");
 	}
 
-	private void remove(Player player, Npc npc) {
-		Optional<RespawnNpc> saved = repository.findByNpcId(npc.getGlobalID());
-		if (saved.isEmpty()) {
-			player.sendTextMessage("NPC is not registered.");
-			return;
-		}
-		drop(saved.get());
+	private void remove(Player player, RespawnNpc saved) {
+		drop(saved);
 		player.sendTextMessage("NPC removed.");
 	}
 
-	private void info(Player player, Npc npc) {
-		RespawnNpc saved = requireRegistered(player, npc);
-		if (saved == null) {
+	private void info(Player player, RespawnNpc saved) {
+		player.sendTextMessage(infoLine(saved, World.getNpc(saved.currentNpcId())));
+	}
+
+	private void respawnNow(Player player, String[] args) {
+		withOptionalIdOrFocus(player, args, "/respawn-now [#id]", this::now);
+	}
+
+	private void respawnRemove(Player player, String[] args) {
+		withOptionalIdOrFocus(player, args, "/respawn-remove [#id]", this::remove);
+	}
+
+	private void respawnInfo(Player player, String[] args) {
+		withOptionalIdOrFocus(player, args, "/respawn-info [#id]", this::info);
+	}
+
+	/**
+	 * Optional `#id` / `id` as sole argument; otherwise LoS/nearest focus.
+	 * {@code /respawn-list} has no id form.
+	 */
+	private void withOptionalIdOrFocus(
+			Player player,
+			String[] args,
+			String usage,
+			SavedHandler handler) {
+		if (args.length > 2) {
+			player.sendTextMessage("Usage: " + usage);
 			return;
 		}
-		player.sendTextMessage(infoLine(saved, World.getNpc(saved.currentNpcId())));
+		if (args.length == 2) {
+			Long respawnId = parseRespawnIdToken(args[1]);
+			if (respawnId == null) {
+				player.sendTextMessage("Usage: " + usage);
+				return;
+			}
+			Optional<RespawnNpc> savedOpt = repository.find(respawnId);
+			if (savedOpt.isEmpty()) {
+				player.sendTextMessage("Respawn #" + respawnId + " not found.");
+				return;
+			}
+			handler.handle(player, savedOpt.get());
+			return;
+		}
+		withFocused(player, (p, npc) -> {
+			RespawnNpc saved = requireRegistered(p, npc);
+			if (saved == null) {
+				return;
+			}
+			handler.handle(p, saved);
+		});
+	}
+
+	/** Accepts `1` or `#1`. */
+	private static Long parseRespawnIdToken(String raw) {
+		if (raw == null || raw.isBlank()) {
+			return null;
+		}
+		String token = raw.startsWith("#") ? raw.substring(1) : raw;
+		try {
+			long id = Long.parseLong(token);
+			return id > 0 ? id : null;
+		} catch (NumberFormatException e) {
+			return null;
+		}
 	}
 
 	private void list(Player player) {
@@ -491,13 +547,31 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 		repository.setNextRespawn(saved.respawnId(), null);
 		npcIdToRespawnId.put(newId, saved.respawnId());
 		cancelTimer(saved.respawnId());
+		if (guard != null) {
+			guard.onBodyReplaced(saved.respawnId(), spawned);
+		}
 		return true;
 	}
 
 	private void drop(RespawnNpc saved) {
 		cancelTimer(saved.respawnId());
+		if (guard != null) {
+			guard.onRespawnRemoved(saved.respawnId());
+		}
 		repository.delete(saved.respawnId());
 		npcIdToRespawnId.remove(saved.currentNpcId());
+	}
+
+	private Optional<Npc> livingNpcForRespawn(long respawnId) {
+		Optional<RespawnNpc> saved = repository.find(respawnId);
+		if (saved.isEmpty()) {
+			return Optional.empty();
+		}
+		Npc npc = World.getNpc(saved.get().currentNpcId());
+		if (npc == null || npc.isDead()) {
+			return Optional.empty();
+		}
+		return Optional.of(npc);
 	}
 
 	private void schedule(long respawnId, float delaySeconds) {
@@ -584,6 +658,11 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 	@FunctionalInterface
 	private interface NpcHandler {
 		void handle(Player player, Npc npc);
+	}
+
+	@FunctionalInterface
+	private interface SavedHandler {
+		void handle(Player player, RespawnNpc saved);
 	}
 
 	private enum UpdateMode {

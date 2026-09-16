@@ -9,10 +9,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
+import de.mahagst.risingworld.respawnnpc.guard.GuardPost;
 import net.risingworld.api.database.Database;
 
-/** SQLite persistence for registered NPCs and their snapshots. */
-final class RespawnRepository {
+/** SQLite persistence for respawn_npcs + guard_posts (one respawn.db). */
+public final class RespawnRepository {
 	private final Database database;
 
 	RespawnRepository(Database database) {
@@ -82,11 +83,26 @@ final class RespawnRepository {
 				  pregnant INTEGER NOT NULL
 				)
 				""");
-		// Future columns: add to CREATE above, then
-		// SqliteSchema.ensureColumn(database, "respawn_npcs", "col", "TYPE");
+		database.execute("""
+				CREATE TABLE IF NOT EXISTS guard_posts (
+				  respawn_id INTEGER PRIMARY KEY,
+				  pos_x REAL NOT NULL,
+				  pos_y REAL NOT NULL,
+				  pos_z REAL NOT NULL,
+				  rot_x REAL NOT NULL DEFAULT 0,
+				  rot_y REAL NOT NULL DEFAULT 0,
+				  rot_z REAL NOT NULL DEFAULT 0,
+				  rot_w REAL NOT NULL DEFAULT 1,
+				  FOREIGN KEY (respawn_id) REFERENCES respawn_npcs(respawn_id) ON DELETE CASCADE
+				)
+				""");
+		SqliteSchema.ensureColumn(database, "guard_posts", "rot_x", "REAL NOT NULL DEFAULT 0");
+		SqliteSchema.ensureColumn(database, "guard_posts", "rot_y", "REAL NOT NULL DEFAULT 0");
+		SqliteSchema.ensureColumn(database, "guard_posts", "rot_z", "REAL NOT NULL DEFAULT 0");
+		SqliteSchema.ensureColumn(database, "guard_posts", "rot_w", "REAL NOT NULL DEFAULT 1");
 	}
 
-	Optional<RespawnNpc> find(long respawnId) {
+	public Optional<RespawnNpc> find(long respawnId) {
 		var sql = "SELECT * FROM respawn_npcs WHERE respawn_id = ?";
 		try (var prep = database.getConnection().prepareStatement(sql)) {
 			prep.setLong(1, respawnId);
@@ -272,6 +288,101 @@ final class RespawnRepository {
 		} catch (SQLException e) {
 			e.printStackTrace();
 		}
+	}
+
+	public Optional<GuardPost> findGuardPost(long respawnId) {
+		var sql = """
+				SELECT respawn_id, pos_x, pos_y, pos_z, rot_x, rot_y, rot_z, rot_w
+				FROM guard_posts WHERE respawn_id = ?
+				""";
+		try (var prep = database.getConnection().prepareStatement(sql)) {
+			prep.setLong(1, respawnId);
+			try (var result = prep.executeQuery()) {
+				if (result.next()) {
+					return Optional.of(readGuardPost(result));
+				}
+			}
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
+		return Optional.empty();
+	}
+
+	public List<GuardPost> findAllGuardPosts() {
+		var list = new ArrayList<GuardPost>();
+		var sql = """
+				SELECT respawn_id, pos_x, pos_y, pos_z, rot_x, rot_y, rot_z, rot_w
+				FROM guard_posts
+				""";
+		try (var prep = database.getConnection().prepareStatement(sql);
+				var result = prep.executeQuery()) {
+			while (result.next()) {
+				list.add(readGuardPost(result));
+			}
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
+		return list;
+	}
+
+	public boolean setGuardPost(
+			long respawnId,
+			float x,
+			float y,
+			float z,
+			float rotX,
+			float rotY,
+			float rotZ,
+			float rotW) {
+		var sql = """
+				INSERT INTO guard_posts (respawn_id, pos_x, pos_y, pos_z, rot_x, rot_y, rot_z, rot_w)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+				ON CONFLICT(respawn_id) DO UPDATE SET
+				  pos_x = excluded.pos_x,
+				  pos_y = excluded.pos_y,
+				  pos_z = excluded.pos_z,
+				  rot_x = excluded.rot_x,
+				  rot_y = excluded.rot_y,
+				  rot_z = excluded.rot_z,
+				  rot_w = excluded.rot_w
+				""";
+		try (var prep = database.getConnection().prepareStatement(sql)) {
+			prep.setLong(1, respawnId);
+			prep.setFloat(2, x);
+			prep.setFloat(3, y);
+			prep.setFloat(4, z);
+			prep.setFloat(5, rotX);
+			prep.setFloat(6, rotY);
+			prep.setFloat(7, rotZ);
+			prep.setFloat(8, rotW);
+			return prep.executeUpdate() > 0;
+		} catch (SQLException e) {
+			e.printStackTrace();
+			return false;
+		}
+	}
+
+	public boolean clearGuardPost(long respawnId) {
+		var sql = "DELETE FROM guard_posts WHERE respawn_id = ?";
+		try (var prep = database.getConnection().prepareStatement(sql)) {
+			prep.setLong(1, respawnId);
+			return prep.executeUpdate() > 0;
+		} catch (SQLException e) {
+			e.printStackTrace();
+			return false;
+		}
+	}
+
+	private static GuardPost readGuardPost(ResultSet result) throws SQLException {
+		return new GuardPost(
+				result.getLong("respawn_id"),
+				result.getFloat("pos_x"),
+				result.getFloat("pos_y"),
+				result.getFloat("pos_z"),
+				result.getFloat("rot_x"),
+				result.getFloat("rot_y"),
+				result.getFloat("rot_z"),
+				result.getFloat("rot_w"));
 	}
 
 	private static void bindInsert(PreparedStatement prep, RespawnNpc npc) throws SQLException {
