@@ -80,4 +80,19 @@ public final class GuardService {
 		}
 		npc.moveTo(new Vector3f(post.x(), post.y(), post.z()));
 	}
+
+	/**
+	 * Try to drop an active moveTo by issuing moveTo(current position).
+	 * API has no cancel; this may overwrite the previous target.
+	 */
+	public static void cancelMoveToHere(Npc npc) {
+		if (npc == null || npc.isDead()) {
+			return;
+		}
+		Vector3f pos = npc.getPosition();
+		if (pos == null) {
+			return;
+		}
+		npc.moveTo(new Vector3f(pos.x, pos.y, pos.z));
+	}
 }

@@ -78,7 +78,7 @@ Interval: `0` or less -> `MIN_TEST_SECONDS`. Else `minutes * 60`, cap **86400**.
 - Behaviour / attack reaction: `set*` if overridden flag saved, else `reset*`.
 - `/respawn-now`: ignore death from that `delete()` via `ignoringDeathNpcIds`.
 - Commands: single `PlayerCommandEvent` on the plugin; `setCancelled(true)` when handled.
-- Guard: spawn wait ~2s -> `moveTo` -> distance watch -> stepped turn (~0.4s) -> `setLocked(true)`. Facing from player view direction (not body pitch). No native smooth-turn API.
+- Guard: spawn wait ~2s -> `moveTo` -> distance watch -> turn -> lock. Walk/turn combat -> combat watch (10s). Idle at post: global poll 2s (`alertState` map); if alerted -> unlock + combat watch -> later `startWalk`.
 
 ```text
 NpcDeathEvent (RespawnService)

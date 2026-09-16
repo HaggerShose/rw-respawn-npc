@@ -16,16 +16,21 @@ import net.risingworld.api.utils.Quaternion;
 import net.risingworld.api.utils.Vector3f;
 
 /**
- * Guard: spawn settle -> moveTo -> distance ticks -> turn in steps -> lock.
+ * Guard: spawn settle -> moveTo -> distance ticks -> turn -> lock.
+ * Post alert poll unlocks idle guards into combat watch; combat ends -> startWalk.
  */
 public final class GuardFeature {
 	private static final float WALK_AFTER_SPAWN_SECONDS = 2f;
 	private static final float ARRIVE_DIST = 0.1f;
-	private static final float MIN_INTERVAL = 0.1f;
-	private static final float MAX_INTERVAL = 2f;
+	/** Within this range, poll fast so arrive snaps cleanly. */
+	private static final float NEAR_DIST = 1f;
+	private static final float NEAR_INTERVAL = 0.1f;
+	private static final float FAR_INTERVAL = 1f;
 	private static final int TURN_STEPS = 8;
 	private static final float TURN_STEP_SECONDS = 0.05f;
-	private static final float LOCK_AFTER_TURN_SECONDS = 0.15f;
+	private static final float LOCK_AFTER_TURN_SECONDS = 0.25f;
+	private static final float COMBAT_POLL_SECONDS = 10f;
+	private static final float POST_ALERT_POLL_SECONDS = 1f;
 
 	private final Plugin plugin;
 	private final RespawnRepository repository;
@@ -33,6 +38,10 @@ public final class GuardFeature {
 
 	private final GuardService service = new GuardService();
 	private final Map<Long, Approach> approaches = new HashMap<>();
+	private final Map<Long, Approach> combatWatches = new HashMap<>();
+	/** respawn_id -> last known alerted/hostile for idle post guards. */
+	private final Map<Long, Boolean> alertState = new HashMap<>();
+	private Timer postAlertTimer;
 
 	public GuardFeature(
 			Plugin plugin,
@@ -51,29 +60,36 @@ public final class GuardFeature {
 				onBodyReplaced(post.respawnId(), live.get());
 			}
 		}
+		startPostAlertTimer();
 		System.out.println("[RespawnNpc/Guard] enabled");
 	}
 
 	public void disable() {
+		stopPostAlertTimer();
 		for (Approach approach : approaches.values()) {
 			stopApproachTimer(approach);
 		}
 		approaches.clear();
+		for (Approach combat : combatWatches.values()) {
+			stopApproachTimer(combat);
+		}
+		combatWatches.clear();
+		alertState.clear();
 		service.stop();
 	}
 
 	/** After respawn body: wait, then walk to post. */
 	public void onBodyReplaced(long respawnId, Npc npc) {
 		if (!service.hasPost(respawnId)) {
-			stopApproach(respawnId);
+			stopAll(respawnId);
 			return;
 		}
-		stopApproach(respawnId);
+		stopAll(respawnId);
 		scheduleWalkToPost(respawnId, npc.getGlobalID());
 	}
 
 	public void onRespawnRemoved(long respawnId) {
-		stopApproach(respawnId);
+		stopAll(respawnId);
 		service.removePost(respawnId);
 	}
 
@@ -98,7 +114,7 @@ public final class GuardFeature {
 			player.sendTextMessage("Could not save guard post.");
 			return;
 		}
-		stopApproach(respawnId);
+		stopAll(respawnId);
 		service.putPost(new GuardPost(respawnId, pos.x, pos.y, pos.z, yaw));
 		startWalk(respawnId, live.getGlobalID());
 		player.sendTextMessage("Guard post set (#" + respawnId + ") at "
@@ -110,7 +126,7 @@ public final class GuardFeature {
 			player.sendTextMessage("Respawn #" + respawnId + " has no guard post.");
 			return;
 		}
-		stopApproach(respawnId);
+		stopAll(respawnId);
 		service.removePost(respawnId);
 		repository.clearGuardPost(respawnId);
 		player.sendTextMessage("Guard removed (#" + respawnId + ").");
@@ -132,7 +148,11 @@ public final class GuardFeature {
 		GuardPost post = service.getPost(respawnId);
 		Npc live = World.getNpc(npcId);
 		if (post == null || live == null || live.isDead()) {
-			stopApproach(respawnId);
+			stopAll(respawnId);
+			return;
+		}
+		if (inCombat(live)) {
+			startCombatWatch(respawnId, npcId);
 			return;
 		}
 		float dist = horizontalDist(live, post);
@@ -154,7 +174,7 @@ public final class GuardFeature {
 		if (approach.timer != null && !approach.timer.isKilled()) {
 			approach.timer.kill();
 		}
-		Timer timer = new Timer(1f, Math.max(delay, MIN_INTERVAL), 0, () -> plugin.enqueue(() -> tick(respawnId)));
+		Timer timer = new Timer(1f, delay, 0, () -> plugin.enqueue(() -> tick(respawnId)));
 		approach.timer = timer;
 		timer.start();
 	}
@@ -167,7 +187,11 @@ public final class GuardFeature {
 		GuardPost post = service.getPost(respawnId);
 		Npc live = World.getNpc(approach.npcId);
 		if (post == null || live == null || live.isDead()) {
-			stopApproach(respawnId);
+			stopAll(respawnId);
+			return;
+		}
+		if (inCombat(live)) {
+			startCombatWatch(respawnId, approach.npcId);
 			return;
 		}
 		float dist = horizontalDist(live, post);
@@ -178,11 +202,103 @@ public final class GuardFeature {
 		scheduleTick(respawnId, intervalFor(dist));
 	}
 
+	/**
+	 * Pause walk/arrive; poll until calm, then startWalk again (same as after respawn settle).
+	 */
+	private void startCombatWatch(long respawnId, long npcId) {
+		stopApproach(respawnId);
+		stopCombatWatch(respawnId);
+		Npc live = World.getNpc(npcId);
+		if (live != null && !live.isDead()) {
+			GuardService.cancelMoveToHere(live);
+		}
+		Timer timer = new Timer(1f, COMBAT_POLL_SECONDS, 0, () -> plugin.enqueue(() -> combatTick(respawnId)));
+		combatWatches.put(respawnId, new Approach(npcId, timer));
+		timer.start();
+	}
+
+	private void combatTick(long respawnId) {
+		Approach watch = combatWatches.get(respawnId);
+		if (watch == null) {
+			return;
+		}
+		if (!service.hasPost(respawnId)) {
+			stopAll(respawnId);
+			return;
+		}
+		Npc live = World.getNpc(watch.npcId);
+		if (live == null || live.isDead()) {
+			stopAll(respawnId);
+			return;
+		}
+		if (inCombat(live)) {
+			if (watch.timer != null && !watch.timer.isKilled()) {
+				watch.timer.kill();
+			}
+			Timer timer = new Timer(1f, COMBAT_POLL_SECONDS, 0, () -> plugin.enqueue(() -> combatTick(respawnId)));
+			watch.timer = timer;
+			timer.start();
+			return;
+		}
+		stopCombatWatch(respawnId);
+		startWalk(respawnId, watch.npcId);
+	}
+
+	private static boolean inCombat(Npc npc) {
+		return npc.isAlerted() || npc.getHostilePlayer() != null;
+	}
+
+	/** Idle guards at post: every few seconds, unlock into combat watch if alerted. */
+	private void startPostAlertTimer() {
+		stopPostAlertTimer();
+		postAlertTimer = new Timer(
+				POST_ALERT_POLL_SECONDS,
+				POST_ALERT_POLL_SECONDS,
+				-1,
+				() -> plugin.enqueue(this::pollPostAlerts));
+		postAlertTimer.start();
+	}
+
+	private void stopPostAlertTimer() {
+		if (postAlertTimer != null && !postAlertTimer.isKilled()) {
+			postAlertTimer.kill();
+		}
+		postAlertTimer = null;
+	}
+
+	private void pollPostAlerts() {
+		for (GuardPost post : service.allPosts()) {
+			long respawnId = post.respawnId();
+			if (approaches.containsKey(respawnId) || combatWatches.containsKey(respawnId)) {
+				continue;
+			}
+			Optional<Npc> liveOpt = livingNpcByRespawnId.apply(respawnId);
+			if (liveOpt.isEmpty()) {
+				alertState.remove(respawnId);
+				continue;
+			}
+			Npc live = liveOpt.get();
+			boolean alerted = inCombat(live);
+			alertState.put(respawnId, alerted);
+			if (!alerted) {
+				continue;
+			}
+			if (live.isLocked()) {
+				live.setLocked(false);
+			}
+			startCombatWatch(respawnId, live.getGlobalID());
+		}
+	}
+
 	/** Step-turn toward post yaw, then lock. API has no animated turn. */
 	private void finishArrive(long respawnId, long npcId, GuardPost post) {
 		Npc live = World.getNpc(npcId);
 		if (live == null || live.isDead()) {
-			stopApproach(respawnId);
+			stopAll(respawnId);
+			return;
+		}
+		if (inCombat(live)) {
+			startCombatWatch(respawnId, npcId);
 			return;
 		}
 		float fromYaw = 0f;
@@ -197,7 +313,11 @@ public final class GuardFeature {
 	private void turnStep(long respawnId, long npcId, float fromYaw, float toYaw, int step) {
 		Npc live = World.getNpc(npcId);
 		if (live == null || live.isDead()) {
-			stopApproach(respawnId);
+			stopAll(respawnId);
+			return;
+		}
+		if (inCombat(live)) {
+			startCombatWatch(respawnId, npcId);
 			return;
 		}
 		float t = step / (float) TURN_STEPS;
@@ -205,10 +325,16 @@ public final class GuardFeature {
 		if (step >= TURN_STEPS) {
 			Timer lockDelay = new Timer(1f, LOCK_AFTER_TURN_SECONDS, 0, () -> plugin.enqueue(() -> {
 				Npc still = World.getNpc(npcId);
-				if (still != null && !still.isDead()) {
-					still.setLocked(true);
+				if (still == null || still.isDead()) {
+					stopAll(respawnId);
+					return;
 				}
-				stopApproach(respawnId);
+				if (inCombat(still)) {
+					startCombatWatch(respawnId, npcId);
+					return;
+				}
+				still.setLocked(true);
+				stopAll(respawnId);
 			}));
 			approaches.put(respawnId, new Approach(npcId, lockDelay));
 			lockDelay.start();
@@ -232,10 +358,23 @@ public final class GuardFeature {
 		return from + delta * t;
 	}
 
+	private void stopAll(long respawnId) {
+		stopApproach(respawnId);
+		stopCombatWatch(respawnId);
+		alertState.remove(respawnId);
+	}
+
 	private void stopApproach(long respawnId) {
 		Approach approach = approaches.remove(respawnId);
 		if (approach != null) {
 			stopApproachTimer(approach);
+		}
+	}
+
+	private void stopCombatWatch(long respawnId) {
+		Approach combat = combatWatches.remove(respawnId);
+		if (combat != null) {
+			stopApproachTimer(combat);
 		}
 	}
 
@@ -250,14 +389,7 @@ public final class GuardFeature {
 	}
 
 	private static float intervalFor(float dist) {
-		float interval = 0.05f * dist * dist;
-		if (interval < MIN_INTERVAL) {
-			return MIN_INTERVAL;
-		}
-		if (interval > MAX_INTERVAL) {
-			return MAX_INTERVAL;
-		}
-		return interval;
+		return dist <= NEAR_DIST ? NEAR_INTERVAL : FAR_INTERVAL;
 	}
 
 	private static float horizontalDist(Npc npc, GuardPost post) {
