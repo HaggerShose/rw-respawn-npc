@@ -6,7 +6,7 @@
 
   <groupId>de.mahagst.risingworld</groupId>
   <artifactId>rw-respawn-npc</artifactId>
-  <version>0.7.3</version>
+  <version>0.8.7</version>
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
