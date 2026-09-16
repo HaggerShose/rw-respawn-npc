@@ -32,11 +32,11 @@ No second plugin, no `AdminAccess` class, no separate guard.db.
 6. NPC dies (NpcDeathEvent, not cancelled)
 7. One-shot timer (if none pending)
 8. Timer -> spawnNpc at spawn pose -> apply snapshot -> rebind npc id
-9. If guard post exists: WAITING until `getNearestPlayer() != null`, then `moveTo`
+9. If guard post exists: WAITING until a nearby player, then `moveTo`
 10. At post (`dist <= 0.1`): turn + lock. Walk/combat without nearby player: `forceReplace` then WAITING.
 ```
 
-No continuous poll. Death never overwrites the snapshot. Players install nothing.
+Global guard tick every 2s (0.5 Hz). Death never overwrites the snapshot. Players install nothing.
 
 ## Commands
 
@@ -78,7 +78,7 @@ Interval: `0` or less -> `MIN_TEST_SECONDS`. Else `minutes * 60`, cap **86400**.
 - Behaviour / attack reaction: `set*` if overridden flag saved, else `reset*`.
 - `/respawn-now`: ignore death from that `delete()` via `ignoringDeathNpcIds`.
 - Commands: single `PlayerCommandEvent` on the plugin; `setCancelled(true)` when handled.
-- Guard phases: WAITING (hold at spawn, no `moveTo`) / WALKING (1s tick) / COMBAT (10s tick) / AT_POST (global 1s poll). Hard rule: no player within 64m (xz) and not at post -> `forceReplace` then WAITING. AT_POST without player: ignore. AT_POST + alerted + player -> COMBAT. Arrive: turn + lock. Startup: at post -> lock; else `forceReplace`; missing body skipped. No stuck tracker.
+- Guard phases stay in the `watches` map: WAITING (hold at spawn, no `moveTo`) / WALKING / COMBAT / AT_POST. Global 0.5 Hz tick (`TICK_SECONDS = 2`); COMBAT uses `nextDueMs` +10s. Hard rule: no player within 128m (xz) and not at post -> `forceReplace` then WAITING. AT_POST without player: ignore. AT_POST + alerted + player -> unlock COMBAT. Arrive: turn + lock, then AT_POST watch (not removed). Startup: at post -> lock; else `forceReplace`; missing body gets AT_POST watch until loaded. No stuck tracker.
 
 ```text
 NpcDeathEvent (RespawnService)
@@ -87,13 +87,13 @@ NpcDeathEvent (RespawnService)
   -> timer: spawn + apply + rebind + guard onBodyReplaced (delayed walk if post in RAM)
 ```
 
-At most one pending `Timer` per `respawn_id`. Startup: resume pending death timers only (overdue spawn, else remaining delay). Do not spawn missing idle bodies (`getNpc == null` may mean unloaded chunk).
+At most one pending `Timer` per `respawn_id`. Startup: one `findAll()` fills RAM maps, then resume pending death timers (overdue spawn, else remaining delay). Do not spawn missing idle bodies (`getNpc == null` may mean unloaded chunk).
 
 ## Persistence: SQLite
 
 One file per world: `getPath() + "/" + World.getName() + ".db"` (path-unsafe chars in the name become `_`). `PRAGMA foreign_keys = ON`, `journal_mode=DELETE`. Checkpoint on disable.
 
-RAM map `current_npc_id -> respawn_id` for death filter. Guard posts: RAM map in `GuardService` (hot path); DB only on enable load / make / remove.
+RAM maps: `current_npc_id -> respawn_id`, `respawn_id -> current_npc_id`, `respawn_id -> interval_seconds`. Death filter and `livingNpcForRespawn` use RAM (no full-row DB). Guard posts: RAM map in `GuardService` (hot path); DB only on enable load / make / remove. Guard watches (`respawn_id -> npcId + phase + nextDueMs`) stay in RAM including AT_POST.
 
 ```text
 respawn_npcs:

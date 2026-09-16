@@ -37,6 +37,10 @@ public final class RespawnService implements Listener {
 
 	/** current npc id -> respawn_id */
 	private final Map<Long, Long> npcIdToRespawnId = new HashMap<>();
+	/** respawn_id -> current npc id */
+	private final Map<Long, Long> respawnIdToNpcId = new HashMap<>();
+	/** respawn_id -> interval_seconds */
+	private final Map<Long, Integer> respawnIdToInterval = new HashMap<>();
 	/** At most one pending RW timer per respawn_id. */
 	private final Map<Long, Timer> timers = new HashMap<>();
 	/** Deaths caused by /respawn-now delete() must not start a timer. */
@@ -70,8 +74,7 @@ public final class RespawnService implements Listener {
 	}
 
 	public void enable() {
-		loadNpcMap();
-		resumePendingTimers();
+		loadAndResume();
 		plugin.registerEventListener(this);
 	}
 
@@ -89,11 +92,11 @@ public final class RespawnService implements Listener {
 	}
 
 	public Optional<Npc> livingNpcForRespawn(long respawnId) {
-		Optional<RespawnNpc> saved = repository.find(respawnId);
-		if (saved.isEmpty()) {
+		Long npcId = respawnIdToNpcId.get(respawnId);
+		if (npcId == null) {
 			return Optional.empty();
 		}
-		Npc npc = World.getNpc(saved.get().currentNpcId());
+		Npc npc = World.getNpc(npcId);
 		if (npc == null || npc.isDead()) {
 			return Optional.empty();
 		}
@@ -127,8 +130,11 @@ public final class RespawnService implements Listener {
 			player.sendTextMessage("Could not save respawn NPC.");
 			return;
 		}
-		npcIdToRespawnId.put(npc.getGlobalID(), id.get());
-		player.sendTextMessage("Respawn NPC created (#" + id.get() + "). Interval: " + intervalSeconds + "s"
+		long respawnId = id.get();
+		npcIdToRespawnId.put(npc.getGlobalID(), respawnId);
+		respawnIdToNpcId.put(respawnId, npc.getGlobalID());
+		respawnIdToInterval.put(respawnId, intervalSeconds);
+		player.sendTextMessage("Respawn NPC created (#" + respawnId + "). Interval: " + intervalSeconds + "s"
 				+ " (spawn at your position)");
 	}
 
@@ -211,17 +217,22 @@ public final class RespawnService implements Listener {
 		if (respawnId == null) {
 			return;
 		}
-		Optional<RespawnNpc> savedOpt = repository.find(respawnId);
-		if (savedOpt.isEmpty()) {
-			npcIdToRespawnId.remove(npcId);
+		if (timers.containsKey(respawnId)) {
 			return;
 		}
-		RespawnNpc saved = savedOpt.get();
-		if (saved.nextRespawn() != null) {
-			return;
+		Integer interval = respawnIdToInterval.get(respawnId);
+		if (interval == null) {
+			Optional<RespawnNpc> savedOpt = repository.find(respawnId);
+			if (savedOpt.isEmpty()) {
+				npcIdToRespawnId.remove(npcId);
+				respawnIdToNpcId.remove(respawnId);
+				return;
+			}
+			interval = savedOpt.get().intervalSeconds();
+			respawnIdToInterval.put(respawnId, interval);
 		}
-		repository.setNextRespawn(respawnId, System.currentTimeMillis() + saved.intervalSeconds() * 1000L);
-		schedule(respawnId, saved.intervalSeconds());
+		repository.setNextRespawn(respawnId, System.currentTimeMillis() + interval * 1000L);
+		schedule(respawnId, interval);
 	}
 
 	private boolean updateSnapshot(Player player, RespawnNpc saved, Npc focusedNpc, boolean quietSuccess) {
@@ -284,6 +295,7 @@ public final class RespawnService implements Listener {
 			return;
 		}
 		repository.setIntervalSeconds(saved.respawnId(), intervalSeconds);
+		respawnIdToInterval.put(saved.respawnId(), intervalSeconds);
 		player.sendTextMessage("Interval updated to " + intervalSeconds + "s (#" + saved.respawnId() + ").");
 	}
 
@@ -320,6 +332,7 @@ public final class RespawnService implements Listener {
 		repository.setCurrentNpcId(saved.respawnId(), newId);
 		repository.setNextRespawn(saved.respawnId(), null);
 		npcIdToRespawnId.put(newId, saved.respawnId());
+		respawnIdToNpcId.put(saved.respawnId(), newId);
 		cancelTimer(saved.respawnId());
 		onBodyReplaced.accept(saved.respawnId(), spawned);
 		return true;
@@ -329,7 +342,12 @@ public final class RespawnService implements Listener {
 		cancelTimer(saved.respawnId());
 		onRespawnRemoved.accept(saved.respawnId());
 		repository.delete(saved.respawnId());
+		Long mapped = respawnIdToNpcId.remove(saved.respawnId());
+		if (mapped != null) {
+			npcIdToRespawnId.remove(mapped);
+		}
 		npcIdToRespawnId.remove(saved.currentNpcId());
+		respawnIdToInterval.remove(saved.respawnId());
 	}
 
 	private void schedule(long respawnId, float delaySeconds) {
@@ -356,16 +374,16 @@ public final class RespawnService implements Listener {
 		timers.clear();
 	}
 
-	private void loadNpcMap() {
-		for (RespawnNpc saved : repository.findAll()) {
-			npcIdToRespawnId.put(saved.currentNpcId(), saved.respawnId());
-		}
-	}
-
-	/** Startup: resume death timers only. Missing bodies are not spawned (unloaded chunks). */
-	private void resumePendingTimers() {
+	/** Startup: RAM maps from one findAll, then resume death timers only. */
+	private void loadAndResume() {
+		npcIdToRespawnId.clear();
+		respawnIdToNpcId.clear();
+		respawnIdToInterval.clear();
 		long now = System.currentTimeMillis();
 		for (RespawnNpc saved : repository.findAll()) {
+			npcIdToRespawnId.put(saved.currentNpcId(), saved.respawnId());
+			respawnIdToNpcId.put(saved.respawnId(), saved.currentNpcId());
+			respawnIdToInterval.put(saved.respawnId(), saved.intervalSeconds());
 			Long next = saved.nextRespawn();
 			if (next == null) {
 				continue;
