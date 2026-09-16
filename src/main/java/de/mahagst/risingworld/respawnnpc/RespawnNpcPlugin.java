@@ -43,6 +43,8 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 		respawn = new RespawnService(this, repository);
 		guard = new GuardFeature(this, repository, respawn::livingNpcForRespawn, respawn::forceReplace);
 		respawn.setGuardHooks(guard::onBodyReplaced, guard::onRespawnRemoved);
+		respawn.setGuardStatus(guard::statusOf);
+		respawn.setGuardPostPos(guard::postPosOf);
 		respawn.enable();
 		guard.enable();
 		registerEventListener(this);

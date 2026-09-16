@@ -9,6 +9,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.LongConsumer;
+import java.util.function.LongFunction;
 
 import de.mahagst.risingworld.respawnnpc.guard.GuardService;
 import net.risingworld.api.Plugin;
@@ -31,8 +32,6 @@ public final class RespawnService implements Listener {
 	/** Effective delay when /make-respawn gets 0 or negative minutes (quick test). */
 	static final int MIN_TEST_SECONDS = 1;
 
-	private static final float STARTUP_ENSURE_SECONDS = 2f;
-
 	private final Plugin plugin;
 	private final RespawnRepository repository;
 
@@ -42,12 +41,13 @@ public final class RespawnService implements Listener {
 	private final Map<Long, Timer> timers = new HashMap<>();
 	/** Deaths caused by /respawn-now delete() must not start a timer. */
 	private final Set<Long> ignoringDeathNpcIds = new HashSet<>();
-	private Timer startupEnsureTimer;
 
 	private BiConsumer<Long, Npc> onBodyReplaced = (id, npc) -> {
 	};
 	private LongConsumer onRespawnRemoved = id -> {
 	};
+	private LongFunction<String> guardStatus = id -> "";
+	private LongFunction<String> guardPostPos = id -> "";
 
 	public RespawnService(Plugin plugin, RespawnRepository repository) {
 		this.plugin = plugin;
@@ -61,15 +61,21 @@ public final class RespawnService implements Listener {
 		};
 	}
 
+	public void setGuardStatus(LongFunction<String> guardStatus) {
+		this.guardStatus = guardStatus != null ? guardStatus : id -> "";
+	}
+
+	public void setGuardPostPos(LongFunction<String> guardPostPos) {
+		this.guardPostPos = guardPostPos != null ? guardPostPos : id -> "";
+	}
+
 	public void enable() {
 		loadNpcMap();
 		resumePendingTimers();
-		scheduleStartupEnsure();
 		plugin.registerEventListener(this);
 	}
 
 	public void disable() {
-		cancelStartupEnsure();
 		cancelAllTimers();
 		plugin.unregisterEventListener(this);
 	}
@@ -171,7 +177,7 @@ public final class RespawnService implements Listener {
 	}
 
 	public void info(Player player, RespawnNpc saved) {
-		player.sendTextMessage(infoLine(saved, World.getNpc(saved.currentNpcId())));
+		player.sendTextMessage(formatEntry(saved, World.getNpc(saved.currentNpcId())));
 	}
 
 	public void list(Player player) {
@@ -180,9 +186,12 @@ public final class RespawnService implements Listener {
 			player.sendTextMessage("No respawn NPCs registered.");
 			return;
 		}
+		StringBuilder out = new StringBuilder();
+		out.append("<color=#aaaaaa>Respawn NPCs (").append(all.size()).append(")</color>");
 		for (RespawnNpc saved : all) {
-			player.sendTextMessage(infoLine(saved, World.getNpc(saved.currentNpcId())));
+			out.append('\n').append(formatEntry(saved, World.getNpc(saved.currentNpcId())));
 		}
+		player.sendTextMessage(out.toString());
 	}
 
 	@EventMethod
@@ -353,7 +362,7 @@ public final class RespawnService implements Listener {
 		}
 	}
 
-	/** Startup: resume death timers only. Living bodies checked after a short delay. */
+	/** Startup: resume death timers only. Missing bodies are not spawned (unloaded chunks). */
 	private void resumePendingTimers() {
 		long now = System.currentTimeMillis();
 		for (RespawnNpc saved : repository.findAll()) {
@@ -369,64 +378,51 @@ public final class RespawnService implements Listener {
 		}
 	}
 
-	private void scheduleStartupEnsure() {
-		cancelStartupEnsure();
-		startupEnsureTimer = new Timer(1f, STARTUP_ENSURE_SECONDS, 0,
-				() -> plugin.enqueue(this::ensureLivingBodies));
-		startupEnsureTimer.start();
-	}
-
-	private void cancelStartupEnsure() {
-		if (startupEnsureTimer != null && !startupEnsureTimer.isKilled()) {
-			startupEnsureTimer.kill();
-		}
-		startupEnsureTimer = null;
-	}
-
-	/**
-	 * After world NPCs are queryable: respawn any registered body that is missing or dead
-	 * (and not already on a death timer).
-	 */
-	private void ensureLivingBodies() {
-		startupEnsureTimer = null;
-		int fixed = 0;
-		for (RespawnNpc saved : repository.findAll()) {
-			if (saved.nextRespawn() != null) {
-				continue;
-			}
-			Npc current = World.getNpc(saved.currentNpcId());
-			if (current != null && !current.isDead()) {
-				continue;
-			}
-			System.out.println("[RespawnNpc] startup: missing/dead body #" + saved.respawnId()
-					+ ", respawning");
-			if (spawnReplacement(saved)) {
-				fixed++;
-			}
-		}
-		if (fixed > 0) {
-			System.out.println("[RespawnNpc] startup: restored " + fixed + " NPC(s)");
-		}
-	}
-
-	private static String infoLine(RespawnNpc saved, Npc current) {
+	private String formatEntry(RespawnNpc saved, Npc current) {
 		boolean pending = saved.nextRespawn() != null;
-		String rest = "-";
+		boolean alive = current != null && !current.isDead();
+		String state;
+		String color;
 		if (pending) {
-			rest = Math.max(0, (saved.nextRespawn() - System.currentTimeMillis()) / 1000) + "s";
+			long rest = Math.max(0, (saved.nextRespawn() - System.currentTimeMillis()) / 1000);
+			state = "pending " + rest + "s";
+			color = "#ffcc66";
+		} else if (current == null) {
+			state = "missing";
+			color = "#888888";
+		} else if (!alive) {
+			state = "dead";
+			color = "#ff6666";
+		} else {
+			String guard = guardStatus.apply(saved.respawnId());
+			if (guard == null || guard.isBlank()) {
+				state = "alive";
+				color = "#cccccc";
+			} else {
+				state = guard;
+				color = switch (guard) {
+					case "at post" -> "#66ff88";
+					case "walking" -> "#66aaff";
+					case "waiting" -> "#66ccff";
+					case "combat" -> "#ff5555";
+					default -> "#cccccc";
+				};
+			}
 		}
 		String label = saved.typeName();
 		if (saved.name() != null && !saved.name().isBlank()) {
 			label = saved.typeName() + " \"" + saved.name() + "\"";
 		}
-		boolean alive = current != null && !current.isDead();
-		String currentPos = alive ? fmtPos(current.getPosition()) : "-";
-		return "#" + saved.respawnId() + " " + label
-				+ " npc=" + saved.currentNpcId() + " " + (alive ? "alive" : "dead")
-				+ " spawn=" + fmtPos(saved.posX(), saved.posY(), saved.posZ())
-				+ " current=" + currentPos
-				+ " interval=" + saved.intervalSeconds() + "s"
-				+ " pending=" + (pending ? "yes " + rest : "no");
+		String now = alive ? fmtPos(current.getPosition()) : "-";
+		String locked = alive && current.isLocked() ? "  <color=#ffaa44>locked</color>" : "";
+		String post = guardPostPos.apply(saved.respawnId());
+		String postPart = (post == null || post.isBlank()) ? "" : "   post " + post;
+		return "<color=#ffffff>#" + saved.respawnId() + "</color>  " + label
+				+ "  <color=" + color + ">" + state + "</color>" + locked
+				+ "\n  " + saved.intervalSeconds() + "s"
+				+ "   spawn " + fmtPos(saved.posX(), saved.posY(), saved.posZ())
+				+ postPart
+				+ "   now " + now;
 	}
 
 	private static String fmtPos(Vector3f pos) {

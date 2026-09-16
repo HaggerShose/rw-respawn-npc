@@ -32,8 +32,8 @@ No second plugin, no `AdminAccess` class, no separate guard.db.
 6. NPC dies (NpcDeathEvent, not cancelled)
 7. One-shot timer (if none pending)
 8. Timer -> spawnNpc at spawn pose -> apply snapshot -> rebind npc id
-9. If guard post exists: after ~2s `moveTo`, start distance watch
-10. Near post (`dist <= 0.1`): setRotation + setLocked(true). No setPosition. Stuck ignored for now.
+9. If guard post exists: WAITING until `getNearestPlayer() != null`, then `moveTo`
+10. At post (`dist <= 0.1`): turn + lock. Walk/combat without nearby player: `forceReplace` then WAITING.
 ```
 
 No continuous poll. Death never overwrites the snapshot. Players install nothing.
@@ -46,20 +46,20 @@ Admin commands reply only to the executing admin. Auto-respawn is silent.
 
 No name clash with RespawnChest (`/make-refill`, `/refill-*`).
 
-| Command                           | Effect                                                                                       |
-| --------------------------------- | -------------------------------------------------------------------------------------------- |
-| `/make-respawn <minutes>`         | Register focused NPC; snapshot from NPC, spawn pose = your pose. Already registered: error.  |
-| `/respawn-update`                 | Snapshot only. Optional token: `snapshot`.                                                   |
-| `/respawn-update pose`            | Spawn pose only (your position/rotation). Does **not** touch guard.                          |
-| `/respawn-update all`             | Snapshot + spawn pose.                                                                       |
-| `/respawn-update timer <minutes>` | Interval only (pending timer not restarted).                                                 |
-| `/respawn-update #id ...`         | Same modes by respawn id (requires `#`).                                                     |
-| `/respawn-now [#id]`              | Spawn replacement now. If live body exists, `delete()` after successful spawn (no corpse).   |
-| `/respawn-remove [#id]`           | Drop DB row + timer + guard post (FK CASCADE + RAM clear). Living NPC stays.                 |
-| `/respawn-info [#id]`             | Interval, pending, spawn/current pos, type/name.                                             |
-| `/respawn-list`                   | All entries.                                                                                 |
-| `/make-guard <id>`                | Guard post = your xyz + rotation. Living NPC walks there; on arrive facing+lock.             |
-| `/guard-remove <id>`              | Clear guard post. NPC not moved.                                                             |
+| Command                           | Effect                                                                                      |
+| --------------------------------- | ------------------------------------------------------------------------------------------- |
+| `/make-respawn <minutes>`         | Register focused NPC; snapshot from NPC, spawn pose = your pose. Already registered: error. |
+| `/respawn-update`                 | Snapshot only. Optional token: `snapshot`.                                                  |
+| `/respawn-update pose`            | Spawn pose only (your position/rotation). Does **not** touch guard.                         |
+| `/respawn-update all`             | Snapshot + spawn pose.                                                                      |
+| `/respawn-update timer <minutes>` | Interval only (pending timer not restarted).                                                |
+| `/respawn-update #id ...`         | Same modes by respawn id (requires `#`).                                                    |
+| `/respawn-now [#id]`              | Spawn replacement now. If live body exists, `delete()` after successful spawn (no corpse).  |
+| `/respawn-remove [#id]`           | Drop DB row + timer + guard post (FK CASCADE + RAM clear). Living NPC stays.                |
+| `/respawn-info [#id]`             | Interval, pending, spawn/current pos, type/name.                                            |
+| `/respawn-list`                   | All entries (one chat block: state, spawn/now, interval).                                   |
+| `/make-guard <id>`                | Guard post = your xyz + rotation. Living NPC walks there; on arrive facing+lock.            |
+| `/guard-remove <id>`              | Clear guard post. NPC not moved.                                                            |
 
 Focus: LoS 10f, else nearest non-transient within 10. Optional `#id` or bare `id` for `now` / `remove` / `info` / guard. `/respawn-update` id form is `#id` only. `/make-respawn` always needs focus. `/respawn-list` lists all.
 
@@ -78,7 +78,7 @@ Interval: `0` or less -> `MIN_TEST_SECONDS`. Else `minutes * 60`, cap **86400**.
 - Behaviour / attack reaction: `set*` if overridden flag saved, else `reset*`.
 - `/respawn-now`: ignore death from that `delete()` via `ignoringDeathNpcIds`.
 - Commands: single `PlayerCommandEvent` on the plugin; `setCancelled(true)` when handled.
-- Guard: spawn wait ~2s -> `moveTo` -> distance watch -> turn -> lock. Far stuck (>1m): 5s without ~5m closer -> retry `moveTo` (2x) then `forceReplace`. Walk/turn combat -> combat watch (10s). Idle post: poll 1s (`alertState`); alerted -> unlock + combat watch -> `startWalk`.
+- Guard phases: WAITING (hold at spawn, no `moveTo`) / WALKING (1s tick) / COMBAT (10s tick) / AT_POST (global 1s poll). Hard rule: no player within 64m (xz) and not at post -> `forceReplace` then WAITING. AT_POST without player: ignore. AT_POST + alerted + player -> COMBAT. Arrive: turn + lock. Startup: at post -> lock; else `forceReplace`; missing body skipped. No stuck tracker.
 
 ```text
 NpcDeathEvent (RespawnService)
@@ -87,7 +87,7 @@ NpcDeathEvent (RespawnService)
   -> timer: spawn + apply + rebind + guard onBodyReplaced (delayed walk if post in RAM)
 ```
 
-At most one pending `Timer` per `respawn_id`. Startup: resume pending death timers immediately; after ~2s ensure every idle row has a living body (else `spawnReplacement`).
+At most one pending `Timer` per `respawn_id`. Startup: resume pending death timers only (overdue spawn, else remaining delay). Do not spawn missing idle bodies (`getNpc == null` may mean unloaded chunk).
 
 ## Persistence: SQLite
 
