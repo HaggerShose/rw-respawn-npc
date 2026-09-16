@@ -290,24 +290,6 @@ public final class RespawnRepository {
 		}
 	}
 
-	public Optional<GuardPost> findGuardPost(long respawnId) {
-		var sql = """
-				SELECT respawn_id, pos_x, pos_y, pos_z, rot_x, rot_y, rot_z, rot_w
-				FROM guard_posts WHERE respawn_id = ?
-				""";
-		try (var prep = database.getConnection().prepareStatement(sql)) {
-			prep.setLong(1, respawnId);
-			try (var result = prep.executeQuery()) {
-				if (result.next()) {
-					return Optional.of(readGuardPost(result));
-				}
-			}
-		} catch (SQLException e) {
-			e.printStackTrace();
-		}
-		return Optional.empty();
-	}
-
 	public List<GuardPost> findAllGuardPosts() {
 		var list = new ArrayList<GuardPost>();
 		var sql = """

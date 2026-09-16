@@ -12,14 +12,11 @@ import net.risingworld.api.utils.Vector3f;
  * Hot path (respawn body swap) never hits SQLite.
  */
 public final class GuardService {
-	/** respawn_id -> guard post (RAM mirror of guard.db) */
+	/** respawn_id -> guard post (RAM mirror of guard_posts) */
 	private final Map<Long, GuardPost> posts = new HashMap<>();
-	/** respawn_id -> current npc global id (only while a body is bound) */
-	private final Map<Long, Long> boundNpcByRespawn = new HashMap<>();
 
 	public void loadPosts(Collection<GuardPost> all) {
 		posts.clear();
-		boundNpcByRespawn.clear();
 		for (GuardPost post : all) {
 			posts.put(post.respawnId(), post);
 		}
@@ -27,10 +24,6 @@ public final class GuardService {
 
 	public boolean hasPost(long respawnId) {
 		return posts.containsKey(respawnId);
-	}
-
-	public GuardPost getPost(long respawnId) {
-		return posts.get(respawnId);
 	}
 
 	public Collection<GuardPost> allPosts() {
@@ -46,7 +39,6 @@ public final class GuardService {
 	/** Remove from RAM. Caller deletes from DB. */
 	public void removePost(long respawnId) {
 		posts.remove(respawnId);
-		boundNpcByRespawn.remove(respawnId);
 	}
 
 	/**
@@ -56,26 +48,19 @@ public final class GuardService {
 	public void onBodyReplaced(long respawnId, Npc npc) {
 		GuardPost post = posts.get(respawnId);
 		if (post == null) {
-			boundNpcByRespawn.remove(respawnId);
 			return;
 		}
 		bind(post, npc);
 	}
 
-	public void unbindByNpcId(long npcId) {
-		boundNpcByRespawn.entrySet().removeIf(e -> e.getValue() == npcId);
-	}
-
 	public void stop() {
 		posts.clear();
-		boundNpcByRespawn.clear();
 	}
 
 	private void bind(GuardPost post, Npc npc) {
 		if (npc == null || npc.isDead()) {
 			return;
 		}
-		boundNpcByRespawn.put(post.respawnId(), npc.getGlobalID());
 		sendToPost(npc, post.x(), post.y(), post.z());
 	}
 

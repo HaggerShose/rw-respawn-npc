@@ -13,11 +13,13 @@ This is not a perfect clone: every readable field is stored, but only fields wit
 3. Run `/make-respawn <minutes>`.
 4. When that NPC dies, a one-shot timer starts.
 5. When the timer ends, a new NPC is spawned at the **saved player pose** and the snapshot is applied.
+6. Optional: if a guard post is set, the NPC walks there shortly after spawn.
 
 Notes:
 
 - The snapshot is taken at register / `/respawn-update` time, never on death.
 - Spawn pose comes from the admin's position and rotation at register (or `/respawn-update pose` / `all`).
+- Guard post is independent (`/make-guard`); `/respawn-update pose` does not change it.
 - Default `/respawn-update` only refreshes the NPC snapshot; spawn pose stays.
 - While a timer is already running, further deaths do not restart it.
 - Respawn itself is silent (no broadcast).
@@ -41,10 +43,12 @@ Target the NPC first (except `/respawn-list` and optional `#id` / `id` forms), t
 | `/respawn-remove [#id]`           | Unregister. The living NPC stays.                                                                                    |
 | `/respawn-info [#id]`             | Show interval, pending state, remaining time, spawn/current position.                                                |
 | `/respawn-list`                   | List all registered NPCs.                                                                                            |
+| `/make-guard <id>`                | Guard post = your position (+ rotation stored). Living NPC walks there once.                                         |
+| `/guard-remove <id>`              | Clear guard post. NPC stays put.                                                                                     |
 
 Optional `snapshot` token: `/respawn-update snapshot` equals bare `/respawn-update`.
 
-`#id` and bare `id` both work for `now` / `remove` / `info` (and guard). `/respawn-update` keeps the `#id` form.
+`#id` and bare `id` both work for `now` / `remove` / `info` / guard. `/respawn-update` keeps the `#id` form.
 
 ### Interval
 
