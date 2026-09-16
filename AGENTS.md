@@ -40,7 +40,7 @@ No continuous poll. Death never overwrites the snapshot. Players install nothing
 
 ## Commands
 
-Admins only: `player.isAdmin()` (`Server_Admins`) or UIDs in `RespawnNpcPlugin.ALLOWED_UIDS`. Otherwise ignore silently (no reply, do not cancel).
+Admins only: `player.isAdmin()` (`Server_Admins`). Otherwise ignore silently (no reply, do not cancel).
 
 Admin commands reply only to the executing admin. Auto-respawn is silent.
 
@@ -78,7 +78,7 @@ Interval: `0` or less -> `MIN_TEST_SECONDS`. Else `minutes * 60`, cap **86400**.
 - Behaviour / attack reaction: `set*` if overridden flag saved, else `reset*`.
 - `/respawn-now`: ignore death from that `delete()` via `ignoringDeathNpcIds`.
 - Commands: single `PlayerCommandEvent` on the plugin; `setCancelled(true)` when handled.
-- Guard: spawn wait ~2s -> `moveTo` -> distance watch -> turn -> lock. Walk/turn combat -> combat watch (10s). Idle at post: global poll 2s (`alertState` map); if alerted -> unlock + combat watch -> later `startWalk`.
+- Guard: spawn wait ~2s -> `moveTo` -> distance watch -> turn -> lock. Far stuck (>1m): 5s without ~5m closer -> retry `moveTo` (2x) then `forceReplace`. Walk/turn combat -> combat watch (10s). Idle post: poll 1s (`alertState`); alerted -> unlock + combat watch -> `startWalk`.
 
 ```text
 NpcDeathEvent (RespawnService)
@@ -87,7 +87,7 @@ NpcDeathEvent (RespawnService)
   -> timer: spawn + apply + rebind + guard onBodyReplaced (delayed walk if post in RAM)
 ```
 
-At most one pending `Timer` per `respawn_id`. Startup: load map; overdue/missing -> spawn; else schedule remaining delay.
+At most one pending `Timer` per `respawn_id`. Startup: resume pending death timers immediately; after ~2s ensure every idle row has a living body (else `spawnReplacement`).
 
 ## Persistence: SQLite
 

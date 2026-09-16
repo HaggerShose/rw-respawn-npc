@@ -4,6 +4,7 @@ import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.LongConsumer;
 import java.util.function.LongFunction;
 
 import de.mahagst.risingworld.respawnnpc.RespawnRepository;
@@ -17,15 +18,20 @@ import net.risingworld.api.utils.Vector3f;
 
 /**
  * Guard: spawn settle -> moveTo -> distance ticks -> turn -> lock.
- * Post alert poll unlocks idle guards into combat watch; combat ends -> startWalk.
+ * Far walk: stuck check; retry moveTo then forceReplace. Post alert -> combat watch -> startWalk.
  */
 public final class GuardFeature {
 	private static final float WALK_AFTER_SPAWN_SECONDS = 2f;
 	private static final float ARRIVE_DIST = 0.1f;
-	/** Within this range, poll fast so arrive snaps cleanly. */
+	/** Within this range, poll fast so arrive snaps cleanly. Stuck check is far-only. */
 	private static final float NEAR_DIST = 1f;
 	private static final float NEAR_INTERVAL = 0.1f;
 	private static final float FAR_INTERVAL = 1f;
+	/** Far ticks (~1s each) without enough approach before retry/respawn. */
+	private static final int STUCK_TICKS = 5;
+	/** Required distance closed toward post within {@link #STUCK_TICKS} (capped near post). */
+	private static final float STUCK_PROGRESS_M = 5f;
+	private static final int MAX_MOVE_RETRIES = 2;
 	private static final int TURN_STEPS = 8;
 	private static final float TURN_STEP_SECONDS = 0.05f;
 	private static final float LOCK_AFTER_TURN_SECONDS = 0.25f;
@@ -35,6 +41,7 @@ public final class GuardFeature {
 	private final Plugin plugin;
 	private final RespawnRepository repository;
 	private final LongFunction<Optional<Npc>> livingNpcByRespawnId;
+	private final LongConsumer forceReplace;
 
 	private final GuardService service = new GuardService();
 	private final Map<Long, Approach> approaches = new HashMap<>();
@@ -46,10 +53,12 @@ public final class GuardFeature {
 	public GuardFeature(
 			Plugin plugin,
 			RespawnRepository repository,
-			LongFunction<Optional<Npc>> livingNpcByRespawnId) {
+			LongFunction<Optional<Npc>> livingNpcByRespawnId,
+			LongConsumer forceReplace) {
 		this.plugin = plugin;
 		this.repository = repository;
 		this.livingNpcByRespawnId = livingNpcByRespawnId;
+		this.forceReplace = forceReplace;
 	}
 
 	public void enable() {
@@ -162,6 +171,7 @@ public final class GuardFeature {
 		}
 		service.sendToPost(live, post);
 		Approach approach = new Approach(npcId, null);
+		approach.windowDist = dist;
 		approaches.put(respawnId, approach);
 		scheduleTick(respawnId, intervalFor(dist));
 	}
@@ -199,7 +209,48 @@ public final class GuardFeature {
 			finishArrive(respawnId, approach.npcId, post);
 			return;
 		}
+		if (dist > NEAR_DIST && !noteFarProgress(approach, dist)) {
+			onStuck(respawnId, approach, live, post, dist);
+			return;
+		}
 		scheduleTick(respawnId, intervalFor(dist));
+	}
+
+	/**
+	 * Far walk only: true = keep going; false = stuck window expired.
+	 * Required close = min(5m, windowDist - near), else retry/respawn after {@link #STUCK_TICKS}.
+	 */
+	private static boolean noteFarProgress(Approach approach, float dist) {
+		float need = Math.min(STUCK_PROGRESS_M, approach.windowDist - NEAR_DIST);
+		if (need <= 0.01f) {
+			approach.windowDist = dist;
+			approach.staleTicks = 0;
+			return true;
+		}
+		float gained = approach.windowDist - dist;
+		if (gained >= need) {
+			approach.windowDist = dist;
+			approach.staleTicks = 0;
+			return true;
+		}
+		approach.staleTicks++;
+		return approach.staleTicks < STUCK_TICKS;
+	}
+
+	private void onStuck(long respawnId, Approach approach, Npc live, GuardPost post, float dist) {
+		if (approach.moveRetries < MAX_MOVE_RETRIES) {
+			approach.moveRetries++;
+			System.out.println("[RespawnNpc/Guard] stuck #" + respawnId
+					+ " retry moveTo (" + approach.moveRetries + "/" + MAX_MOVE_RETRIES + ")");
+			service.sendToPost(live, post);
+			approach.windowDist = dist;
+			approach.staleTicks = 0;
+			scheduleTick(respawnId, FAR_INTERVAL);
+			return;
+		}
+		System.out.println("[RespawnNpc/Guard] stuck #" + respawnId + " forceReplace after retries");
+		stopAll(respawnId);
+		forceReplace.accept(respawnId);
 	}
 
 	/**
@@ -409,6 +460,10 @@ public final class GuardFeature {
 	private static final class Approach {
 		final long npcId;
 		Timer timer;
+		/** Dist at start of current stuck window (far only). */
+		float windowDist;
+		int staleTicks;
+		int moveRetries;
 
 		Approach(long npcId, Timer timer) {
 			this.npcId = npcId;

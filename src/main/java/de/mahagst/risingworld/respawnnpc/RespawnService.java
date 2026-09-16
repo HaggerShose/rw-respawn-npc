@@ -31,6 +31,8 @@ public final class RespawnService implements Listener {
 	/** Effective delay when /make-respawn gets 0 or negative minutes (quick test). */
 	static final int MIN_TEST_SECONDS = 1;
 
+	private static final float STARTUP_ENSURE_SECONDS = 2f;
+
 	private final Plugin plugin;
 	private final RespawnRepository repository;
 
@@ -40,6 +42,7 @@ public final class RespawnService implements Listener {
 	private final Map<Long, Timer> timers = new HashMap<>();
 	/** Deaths caused by /respawn-now delete() must not start a timer. */
 	private final Set<Long> ignoringDeathNpcIds = new HashSet<>();
+	private Timer startupEnsureTimer;
 
 	private BiConsumer<Long, Npc> onBodyReplaced = (id, npc) -> {
 	};
@@ -60,11 +63,13 @@ public final class RespawnService implements Listener {
 
 	public void enable() {
 		loadNpcMap();
-		sweepAndResume();
+		resumePendingTimers();
+		scheduleStartupEnsure();
 		plugin.registerEventListener(this);
 	}
 
 	public void disable() {
+		cancelStartupEnsure();
 		cancelAllTimers();
 		plugin.unregisterEventListener(this);
 	}
@@ -149,6 +154,15 @@ public final class RespawnService implements Listener {
 			return;
 		}
 		player.sendTextMessage("NPC reset.");
+	}
+
+	/** Guard stuck recovery: same as /respawn-now without player message. */
+	public boolean forceReplace(long respawnId) {
+		Optional<RespawnNpc> saved = repository.find(respawnId);
+		if (saved.isEmpty()) {
+			return false;
+		}
+		return spawnReplacement(saved.get());
 	}
 
 	public void remove(Player player, RespawnNpc saved) {
@@ -339,23 +353,59 @@ public final class RespawnService implements Listener {
 		}
 	}
 
-	/** Startup: spawn overdue / missing NPCs, or schedule remaining delay. */
-	private void sweepAndResume() {
+	/** Startup: resume death timers only. Living bodies checked after a short delay. */
+	private void resumePendingTimers() {
 		long now = System.currentTimeMillis();
 		for (RespawnNpc saved : repository.findAll()) {
 			Long next = saved.nextRespawn();
-			if (next != null) {
-				if (next <= now) {
-					spawnReplacement(saved);
-				} else {
-					schedule(saved.respawnId(), (next - now) / 1000f);
-				}
+			if (next == null) {
+				continue;
+			}
+			if (next <= now) {
+				spawnReplacement(saved);
+			} else {
+				schedule(saved.respawnId(), (next - now) / 1000f);
+			}
+		}
+	}
+
+	private void scheduleStartupEnsure() {
+		cancelStartupEnsure();
+		startupEnsureTimer = new Timer(1f, STARTUP_ENSURE_SECONDS, 0,
+				() -> plugin.enqueue(this::ensureLivingBodies));
+		startupEnsureTimer.start();
+	}
+
+	private void cancelStartupEnsure() {
+		if (startupEnsureTimer != null && !startupEnsureTimer.isKilled()) {
+			startupEnsureTimer.kill();
+		}
+		startupEnsureTimer = null;
+	}
+
+	/**
+	 * After world NPCs are queryable: respawn any registered body that is missing or dead
+	 * (and not already on a death timer).
+	 */
+	private void ensureLivingBodies() {
+		startupEnsureTimer = null;
+		int fixed = 0;
+		for (RespawnNpc saved : repository.findAll()) {
+			if (saved.nextRespawn() != null) {
 				continue;
 			}
 			Npc current = World.getNpc(saved.currentNpcId());
-			if (current == null || current.isDead()) {
-				spawnReplacement(saved);
+			if (current != null && !current.isDead()) {
+				continue;
 			}
+			System.out.println("[RespawnNpc] startup: missing/dead body #" + saved.respawnId()
+					+ ", respawning");
+			if (spawnReplacement(saved)) {
+				fixed++;
+			}
+		}
+		if (fixed > 0) {
+			System.out.println("[RespawnNpc] startup: restored " + fixed + " NPC(s)");
 		}
 	}
 
