@@ -80,7 +80,7 @@ Interval: `0` or less -> `MIN_TEST_SECONDS`. Else cap minutes at `MAX_INTERVAL_S
 - Behaviour / attack reaction: `set*` if overridden flag saved, else `reset*`.
 - `/respawn-now`: unbind old npc id from RAM **before** `delete()`, so the death event is ignored.
 - Commands: single `PlayerCommandEvent` on the plugin; `setCancelled(true)` when handled.
-- Guard core: spawn/make/startWalks -> `moveTo` post -> arrive (`dist^2 <= 0.1^2` xz) -> repeating step-turn on one Watch -> lock only if still at post. Watch only while walking (incl. turn). After lock: `stopWatch`. Status: walking / at post / away. Global 0.5 Hz tick only while watches exist. No combat, no player gate. Startup: at post -> lock; off-post -> walk; missing body skipped; existing settle watch from spawn is not overwritten.
+- Guard core: spawn/make/startWalks -> `moveTo` post -> far poll (2s) until within 1m -> near poll (0.25s) until arrive (`dist^2 <= 0.1^2` xz) -> repeating step-turn on one Watch -> lock + `setPosition` post. Re-`moveTo` after 30s without arrive (API has no active-moveTo query; new call assumed to replace target). Watch only while walking (incl. turn). After lock: `stopWatch`. Status: walking / at post / away / combat. Far tick while watches exist; near tick only while someone is within 1m. Slow 10s return tick while posts exist: living {@code away} -> `startWalk`. Combat bands (while posts exist): idle 30s player-to-post scan; medium 2s from 160m (post); fast 0.25s from 56m (living NPC) checks `isAlerted` then `enterCombat` (cancel walk via `moveTo` current pos, unlock, drop watch). Combat tick 12s until `!isAlerted` / body gone -> leave combat (`away` / return tick). Combat ids skipped by walk/return ticks. RAM only (no DB). Startup: at post -> lock; off-post -> walk; missing body skipped; existing settle watch from spawn is not overwritten.
 - Enqueued timer work is bound to a generation (respawn) or Watch identity (guard). Cancel invalidates leftover enqueue.
 
 ```text
@@ -98,7 +98,7 @@ At most one pending `Timer` per `respawn_id`. Startup: `loadMaps` one `findAll()
 
 One file per world: `getPath() + "/" + World.getName() + ".db"` (path-unsafe chars in the name become `_`). `PRAGMA foreign_keys = ON`, `journal_mode=DELETE`. Close on disable (no WAL checkpoint).
 
-RAM: `npcIdToRespawnId` plus `byRespawnId` (`RespawnState`: npc id, interval, timer, generation). Death filter and `livingNpcForRespawn` use RAM (no full-row DB). Guard posts: RAM map in `GuardService` (hot path); DB only on enable load / make / remove. Guard watches (`respawn_id -> Watch`) only while walking.
+RAM: `npcIdToRespawnId` plus `byRespawnId` (`RespawnState`: npc id, interval, timer, generation). Death filter and `livingNpcForRespawn` use RAM (no full-row DB). Guard posts: RAM map in `GuardService` (hot path); DB only on enable load / make / remove. Guard watches (`respawn_id -> Watch`) only while walking. Combat bands: RAM sets `medium` / `fast` / `combat`.
 
 Writes return false on SQL failure; RAM and success chat update only after a successful write. `completeRespawn` sets `current_npc_id` and clears `next_respawn` in one statement. `/respawn-update all` is one snapshot+pose UPDATE. `findAll` / `findAllGuardPosts` distinguish query failure from an empty table.
 

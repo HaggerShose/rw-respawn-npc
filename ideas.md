@@ -2,7 +2,7 @@
 
 Core now: spawn -> walk to post -> arrive -> turn -> lock.
 
-- ~~Player gate: if no player within a distance the constant checks should be paused or extended~~ -> maybe a player gate for combat mode checks but i need to think more about this.
+- ~~Player gate: if no player within a distance the constant checks should be paused or extended~~ Combat proximity bands: idle 30s player-to-post, medium 2s at 160m, fast 0.25s at 56m + `isAlerted` -> combat, 12s until `!isAlerted` then return-to-post.
 - ~~Observe first (no code yet): respawn and guard `moveTo` when no player is nearby / chunk unloaded. Suspect the NPC stays put with an outstanding `moveTo` while watches keep polling. Later: pause watches or gate on player proximity -- decide after watching a live server.~~
 Beobachtungen:  
   - wenn ich weit weg bin geht ein npc vom pending in den walking state
@@ -12,4 +12,5 @@ Beobachtungen:
   - ohne locked hat der npc die posten koordinaten, aber wenn man in die nähe kommt erscheint er optisch am spawn und wenn er sich dann bewegt aktualisiert sich seine position dort hin wo man ihn sieht. hmmm
   - `still.setPosition(new Vector3f(post.x(), post.y(), post.z()));` nach `still.setLocked(true);` hat das augenscheinlich gefixt.
 
-- invent NPC states and a watcher to track and check these states (pending respawn, walking, at post, combat, stuck,...)
+- ~~away -> walk back to post: slow 10s tick in GuardService (living away only). Near 1m -> fast poll; 30s walk timeout re-issues moveTo. Combat / player-proximity arming later.~~
+- invent more NPC states and a watcher to track and check these states (pending respawn, walking, at post, ~~combat~~, stuck,...)

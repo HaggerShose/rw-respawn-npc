@@ -595,6 +595,7 @@ public final class RespawnService implements Listener {
 					case "at post" -> "#66ff88";
 					case "walking" -> "#66aaff";
 					case "away" -> "#ccaa66";
+					case "combat" -> "#ff5555";
 					default -> "#cccccc";
 				};
 			}
