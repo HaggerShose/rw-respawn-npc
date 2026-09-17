@@ -13,7 +13,7 @@ This is not a perfect clone: every readable field is stored, but only fields wit
 3. Run `/make-respawn <minutes>`.
 4. When that NPC dies, a one-shot timer starts.
 5. When the timer ends, a new NPC is spawned at the **saved player pose** and the snapshot is applied.
-6. Optional: if a guard post is set, the NPC walks there shortly after spawn and locks facing on arrival.
+6. Optional: if a guard post is set, the NPC walks there shortly after spawn and locks facing on arrival. If it wanders off, it is sent back. If it enters combat, the walk is paused until the fight ends.
 
 Notes:
 
@@ -31,21 +31,21 @@ Admin only (`Server_Admins` in `server.properties`).
 
 Target the NPC first (except `/respawn-list` and optional `#id` / `id` forms), then use chat or the `^` console **with** a leading `/`.
 
-| Command                           | Effect                                                                                                               |
-| --------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `/make-respawn <minutes>`         | Register the target NPC. NPC state = snapshot; your pose = spawn. Already registered: error (use `/respawn-update`). |
-| `/respawn-update`                 | Snapshot only (attributes of the live NPC).                                                                          |
-| `/respawn-update pose`            | Spawn pose only (your position/rotation).                                                                            |
-| `/respawn-update all`             | Snapshot + spawn pose.                                                                                               |
-| `/respawn-update timer <minutes>` | Interval only.                                                                                                       |
-| `/respawn-update #2 ...`          | Same modes, target by respawn id (no LoS needed).                                                                    |
-| `/respawn-now [#id]`              | Spawn immediately. If the NPC is still alive, it is deleted (no corpse) after a successful spawn.                    |
-| `/respawn-remove [#id]`           | Unregister. The living NPC stays.                                                                                    |
-| `/respawn-info [#id]`             | Show interval, pending state, remaining time, spawn/current position.                                                |
-| `/respawn-list`                   | List all registered NPCs (state, spawn/current pose, interval).                                                      |
-| `/respawn-list timer`             | List active guard checks (ON/off, interval, covered `#id`s).                                                         |
-| `/make-guard <id>`                | Guard post = your position (+ rotation). NPC walks there, then faces and locks.                                      |
-| `/guard-remove <id>`              | Clear guard post. NPC stays put.                                                                                     |
+| Command                           | Effect                                                                                                                                                                         |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `/make-respawn <minutes>`         | Register the target NPC. NPC state = snapshot; your pose = spawn. Already registered: error (use `/respawn-update`).                                                           |
+| `/respawn-update`                 | Snapshot only (attributes of the live NPC).                                                                                                                                    |
+| `/respawn-update pose`            | Spawn pose only (your position/rotation).                                                                                                                                      |
+| `/respawn-update all`             | Snapshot + spawn pose.                                                                                                                                                         |
+| `/respawn-update timer <minutes>` | Interval only.                                                                                                                                                                 |
+| `/respawn-update #2 ...`          | Same modes, target by respawn id (no LoS needed).                                                                                                                              |
+| `/respawn-now [#id]`              | Spawn immediately. If the NPC is still alive, it is deleted (no corpse) after a successful spawn.                                                                              |
+| `/respawn-remove [#id]`           | Unregister. The living NPC stays.                                                                                                                                              |
+| `/respawn-info [#id]`             | Show interval, pending state, remaining time, spawn/current position.                                                                                                          |
+| `/respawn-list`                   | List all registered NPCs (state, spawn/current pose, interval).                                                                                                                |
+| `/respawn-list timer`             | List active guard checks (ON/off, interval, covered `#id`s).                                                                                                                   |
+| `/make-guard <id>`                | Guard post = your position (+ rotation). NPC walks there, then faces and locks. If it leaves later, it walks back. Combat pauses the walk until the NPC is no longer fighting. |
+| `/guard-remove <id>`              | Clear guard post. NPC stays put.                                                                                                                                               |
 
 Optional `snapshot` token: `/respawn-update snapshot` equals bare `/respawn-update`.
 

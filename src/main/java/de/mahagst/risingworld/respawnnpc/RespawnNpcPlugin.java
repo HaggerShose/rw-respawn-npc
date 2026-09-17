@@ -46,7 +46,7 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 		repository.createSchema();
 		respawn = new RespawnService(this, repository);
 		guard = new GuardService(this, repository, respawn::livingNpcForRespawn);
-		respawn.setGuardHooks(guard::onBodyReplaced, guard::onRespawnRemoved);
+		respawn.setGuardHooks(guard::onBodyReplaced, guard::onRespawnRemoved, guard::onPending);
 		respawn.setGuardStatus(guard::statusOf);
 		respawn.setGuardPostPos(guard::postPosOf);
 		if (!respawn.loadMaps()) {

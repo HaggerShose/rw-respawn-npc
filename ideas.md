@@ -14,3 +14,4 @@ Beobachtungen:
 
 - ~~away -> walk back to post: slow 10s tick in GuardService (living away only). Near 1m -> fast poll; 30s walk timeout re-issues moveTo. Combat / player-proximity arming later.~~
 - invent more NPC states and a watcher to track and check these states (pending respawn, walking, at post, ~~combat~~, stuck,...)
+- Combat arming uses player-to-post distance to enter medium. A guard fighting far from its post (player at the NPC, post hundreds of meters away) never reaches the fast `isAlerted` check. Fine for now: spawn and post must stay close because there is no pathfinding. Later: use the live NPC position for walking/away guards.

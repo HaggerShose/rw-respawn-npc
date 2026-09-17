@@ -34,6 +34,9 @@ import net.risingworld.api.utils.Vector3f;
  * <p>
  * Combat: idle scan of player-to-post distance, medium/fast bands, then {@code isAlerted}
  * enters {@code combat} (walk cancelled). Combat NPCs are ignored by walk/return ticks.
+ * Leaving combat (same body) puts the id back in {@code medium}; {@code away} until return.
+ * {@code isAlerted} is gated at walk/{@code moveTo} and lock. Fast band is only for
+ * walking or at-post bodies. Pending death timers drop out of proximity until a new body.
  */
 public final class GuardService {
 	/** Delay after body spawn before issuing {@code moveTo} (lets the body settle). */
@@ -88,9 +91,13 @@ public final class GuardService {
 	private final Set<Long> fast = new HashSet<>();
 	/** Alerted guards; walk/return ticks skip these. */
 	private final Set<Long> combat = new HashSet<>();
+	/** Walkers already within {@link #NEAR_DIST}; the 0.25s tick iterates only this set. */
+	private final Set<Long> nearWatches = new HashSet<>();
+	/** Death-timer pending; kept out of medium/fast until {@link #onBodyReplaced}. */
+	private final Set<Long> pending = new HashSet<>();
 	/** Far arrive-poll; running only while {@link #watches} is not empty. */
 	private Timer globalTimer;
-	/** Fast arrive-poll; running only while at least one watch is within {@link #NEAR_DIST}. */
+	/** Fast arrive-poll; running only while {@link #nearWatches} is not empty. */
 	private Timer nearTimer;
 	/** Slow away-return scan; running only while {@link #posts} is not empty. */
 	private Timer returnTimer;
@@ -143,7 +150,7 @@ public final class GuardService {
 	public void startWalks() {
 		for (GuardPost post : new ArrayList<>(posts.values())) {
 			long respawnId = post.respawnId();
-			if (watches.containsKey(respawnId) || combat.contains(respawnId)) {
+			if (watches.containsKey(respawnId) || combat.contains(respawnId) || pending.contains(respawnId)) {
 				continue;
 			}
 			Optional<Npc> live = livingNpcByRespawnId.apply(respawnId);
@@ -151,7 +158,7 @@ public final class GuardService {
 				continue;
 			}
 			Npc npc = live.get();
-			if (isAtPost(npc, post)) {
+			if (isAtPost(npc.getPosition(), post)) {
 				finishArrive(respawnId, npc.getGlobalID(), post);
 			} else {
 				startWalk(respawnId, npc.getGlobalID());
@@ -177,26 +184,31 @@ public final class GuardService {
 			killTimer(watch);
 		}
 		watches.clear();
+		nearWatches.clear();
 		posts.clear();
 		medium.clear();
 		fast.clear();
 		combat.clear();
+		pending.clear();
 	}
 
 	/**
-	 * Called after a successful spawn/replacement when this respawn has a guard post.
-	 * Schedules {@link #SETTLE_SECONDS} then walk; no-op (clears watch) if there is no post.
+	 * After spawn/replacement: leave combat if needed, then settle+walk when a post exists.
 	 *
 	 * @param respawnId respawn row id
 	 * @param npc       newly spawned body
 	 */
 	public void onBodyReplaced(long respawnId, Npc npc) {
-		leaveCombat(respawnId);
-		if (!posts.containsKey(respawnId)) {
-			stopWatch(respawnId);
-			return;
-		}
-		scheduleWalk(respawnId, npc.getGlobalID(), SETTLE_SECONDS);
+		leaveCombat(respawnId, npc);
+	}
+
+	/**
+	 * Death timer started: drop this id from proximity bands until a new body exists.
+	 */
+	public void onPending(long respawnId) {
+		pending.add(respawnId);
+		stopWatch(respawnId);
+		dropProximity(respawnId);
 	}
 
 	/**
@@ -206,6 +218,7 @@ public final class GuardService {
 	public void onRespawnRemoved(long respawnId) {
 		stopWatch(respawnId);
 		dropProximity(respawnId);
+		pending.remove(respawnId);
 		posts.remove(respawnId);
 		if (posts.isEmpty()) {
 			stopReturnTick();
@@ -235,7 +248,7 @@ public final class GuardService {
 		if (live.isEmpty()) {
 			return "away";
 		}
-		return isAtPost(live.get(), post) ? "at post" : "away";
+		return isAtPost(live.get().getPosition(), post) ? "at post" : "away";
 	}
 
 	/**
@@ -282,12 +295,12 @@ public final class GuardService {
 			return;
 		}
 		stopWatch(respawnId);
-		leaveCombat(respawnId);
+		leaveCombat(respawnId, null);
 		GuardPost post = new GuardPost(respawnId, pos.x, pos.y, pos.z, yaw);
 		posts.put(respawnId, post);
 		startReturnTickIfNeeded();
 		startIdleProximityIfNeeded();
-		if (isAtPost(live, post)) {
+		if (isAtPost(live.getPosition(), post)) {
 			finishArrive(respawnId, live.getGlobalID(), post);
 		} else {
 			startWalk(respawnId, live.getGlobalID());
@@ -342,7 +355,8 @@ public final class GuardService {
 
 	/**
 	 * One arrive-poll step: stop if body/post gone; finish arrive if close enough;
-	 * otherwise issue or re-issue {@code moveTo}. Starts the near-tick when within {@link #NEAR_DIST}.
+	 * otherwise issue or re-issue {@code moveTo}. {@code isAlerted} -> combat instead of walk.
+	 * Updates {@link #nearWatches} from the same position read.
 	 */
 	private void walkTick(long respawnId) {
 		if (combat.contains(respawnId)) {
@@ -358,8 +372,14 @@ public final class GuardService {
 			stopWatch(respawnId);
 			return;
 		}
-		if (isAtPost(live, post)) {
+		Vector3f pos = live.getPosition();
+		float distSq = distSqXZ(pos, post);
+		if (distSq <= ARRIVE_DIST_SQ) {
 			finishArrive(respawnId, live.getGlobalID(), post);
+			return;
+		}
+		if (live.isAlerted()) {
+			enterCombat(respawnId);
 			return;
 		}
 		long now = System.currentTimeMillis();
@@ -368,13 +388,19 @@ public final class GuardService {
 			watch.dispatched = true;
 			watch.moveIssuedAtMs = now;
 		} else if (now - watch.moveIssuedAtMs >= WALK_TIMEOUT_MS) {
-			// API has no "active moveTo?" query or cancel. A new moveTo replaces the previous
-			// target under current engine behaviour (0.9.3); revisit if that changes.
+			// Timeout is wall-clock since last moveTo, not "no progress". A walking NPC
+			// can still get a fresh command. API has no active-moveTo query (0.9.3);
+			// a new call is assumed to replace the target. If the engine later exposes
+			// progress / active-move, couple retry to stalled movement instead.
 			sendToPost(live, post);
 			watch.moveIssuedAtMs = now;
 		}
-		if (isNearPost(live, post)) {
-			startNearTickIfNeeded();
+		if (distSq <= NEAR_DIST_SQ) {
+			if (nearWatches.add(respawnId)) {
+				startNearTickIfNeeded();
+			}
+		} else {
+			leaveNear(respawnId);
 		}
 	}
 
@@ -399,6 +425,9 @@ public final class GuardService {
 	}
 
 	private void startNearTickIfNeeded() {
+		if (nearWatches.isEmpty()) {
+			return;
+		}
 		if (nearTimer != null && !nearTimer.isKilled()) {
 			return;
 		}
@@ -558,25 +587,39 @@ public final class GuardService {
 		stopBandTimersIfEmpty();
 		Npc live = livingNpcByRespawnId.apply(respawnId).orElse(null);
 		if (watches.containsKey(respawnId)) {
-			if (live != null && !live.isDead()) {
+			if (live != null) {
 				cancelWalkInPlace(live);
 			}
 			stopWatch(respawnId);
-		} else if (live != null && !live.isDead()) {
+		} else if (live != null) {
 			unlockIfNeeded(live);
 		}
 		startCombatTickIfNeeded();
 	}
 
 	/**
-	 * Drop combat membership. Does not lock; {@code away} bodies are picked up by {@link #returnTick}.
+	 * Leave combat and either settle a new body or return the same body to {@code medium}/{@code away}.
+	 *
+	 * @param newBody replacement NPC after spawn, or {@code null} when the same body left combat
 	 */
-	private void leaveCombat(long respawnId) {
-		if (!combat.remove(respawnId)) {
+	private void leaveCombat(long respawnId, Npc newBody) {
+		boolean wasCombat = combat.remove(respawnId);
+		if (wasCombat && combat.isEmpty()) {
+			stopCombatTick();
+		}
+		if (newBody != null) {
+			pending.remove(respawnId);
+			if (!posts.containsKey(respawnId)) {
+				stopWatch(respawnId);
+				return;
+			}
+			scheduleWalk(respawnId, newBody.getGlobalID(), SETTLE_SECONDS);
 			return;
 		}
-		if (combat.isEmpty()) {
-			stopCombatTick();
+		if (wasCombat) {
+			if (medium.add(respawnId)) {
+				startMediumTickIfNeeded();
+			}
 		}
 	}
 
@@ -588,12 +631,12 @@ public final class GuardService {
 			return;
 		}
 		List<Vector3f> players = onlinePlayerPositions();
-		for (GuardPost post : new ArrayList<>(posts.values())) {
+		for (GuardPost post : posts.values()) {
 			long respawnId = post.respawnId();
-			if (combat.contains(respawnId)) {
+			if (combat.contains(respawnId) || pending.contains(respawnId)) {
 				continue;
 			}
-			if (minDistSqXZ(post.x(), post.z(), players) <= MEDIUM_DIST_SQ) {
+			if (hasPlayerWithin(post.x(), post.z(), MEDIUM_DIST_SQ, players)) {
 				if (medium.add(respawnId)) {
 					startMediumTickIfNeeded();
 				}
@@ -607,7 +650,7 @@ public final class GuardService {
 
 	/**
 	 * Every {@value #PROX_MEDIUM_SECONDS}s: keep medium while a player is within post range;
-	 * promote to fast when a player is within {@link #FAST_DIST} of the living NPC.
+	 * promote to fast when a walking or at-post NPC has a player within {@link #FAST_DIST}.
 	 */
 	private void mediumTick() {
 		if (mediumTimer == null) {
@@ -615,24 +658,26 @@ public final class GuardService {
 		}
 		List<Vector3f> players = onlinePlayerPositions();
 		for (Long respawnId : new ArrayList<>(medium)) {
-			if (combat.contains(respawnId)) {
+			if (combat.contains(respawnId) || pending.contains(respawnId)) {
 				medium.remove(respawnId);
 				fast.remove(respawnId);
 				continue;
 			}
 			GuardPost post = posts.get(respawnId);
-			if (post == null || minDistSqXZ(post.x(), post.z(), players) > MEDIUM_DIST_SQ) {
+			if (post == null || !hasPlayerWithin(post.x(), post.z(), MEDIUM_DIST_SQ, players)) {
 				medium.remove(respawnId);
 				fast.remove(respawnId);
 				continue;
 			}
 			Optional<Npc> live = livingNpcByRespawnId.apply(respawnId);
-			if (live.isEmpty() || live.get().isDead()) {
+			if (live.isEmpty()) {
 				fast.remove(respawnId);
 				continue;
 			}
-			Vector3f npcPos = live.get().getPosition();
-			if (npcPos != null && minDistSqXZ(npcPos.x, npcPos.z, players) <= FAST_DIST_SQ) {
+			Npc npc = live.get();
+			Vector3f npcPos = npc.getPosition();
+			boolean alertCheck = watches.containsKey(respawnId) || isAtPost(npcPos, post);
+			if (alertCheck && hasPlayerWithin(npcPos, FAST_DIST_SQ, players)) {
 				if (fast.add(respawnId)) {
 					startFastTickIfNeeded();
 				}
@@ -656,7 +701,7 @@ public final class GuardService {
 				continue;
 			}
 			Optional<Npc> live = livingNpcByRespawnId.apply(respawnId);
-			if (live.isEmpty() || live.get().isDead()) {
+			if (live.isEmpty()) {
 				continue;
 			}
 			if (live.get().isAlerted()) {
@@ -675,8 +720,8 @@ public final class GuardService {
 		}
 		for (Long respawnId : new ArrayList<>(combat)) {
 			Optional<Npc> live = livingNpcByRespawnId.apply(respawnId);
-			if (live.isEmpty() || live.get().isDead() || !live.get().isAlerted()) {
-				leaveCombat(respawnId);
+			if (live.isEmpty() || !live.get().isAlerted()) {
+				leaveCombat(respawnId, null);
 			}
 		}
 	}
@@ -699,17 +744,22 @@ public final class GuardService {
 		return out;
 	}
 
-	private static float minDistSqXZ(float x, float z, List<Vector3f> positions) {
-		float best = Float.POSITIVE_INFINITY;
+	private static boolean hasPlayerWithin(Vector3f pos, float radiusSq, List<Vector3f> positions) {
+		if (pos == null) {
+			return false;
+		}
+		return hasPlayerWithin(pos.x, pos.z, radiusSq, positions);
+	}
+
+	private static boolean hasPlayerWithin(float x, float z, float radiusSq, List<Vector3f> positions) {
 		for (Vector3f pos : positions) {
 			float dx = pos.x - x;
 			float dz = pos.z - z;
-			float d = dx * dx + dz * dz;
-			if (d < best) {
-				best = d;
+			if (dx * dx + dz * dz <= radiusSq) {
+				return true;
 			}
 		}
-		return best;
+		return false;
 	}
 
 	/**
@@ -720,9 +770,9 @@ public final class GuardService {
 		if (returnTimer == null) {
 			return;
 		}
-		for (GuardPost post : new ArrayList<>(posts.values())) {
+		for (GuardPost post : posts.values()) {
 			long respawnId = post.respawnId();
-			if (combat.contains(respawnId) || watches.containsKey(respawnId)) {
+			if (combat.contains(respawnId) || watches.containsKey(respawnId) || pending.contains(respawnId)) {
 				continue;
 			}
 			Optional<Npc> live = livingNpcByRespawnId.apply(respawnId);
@@ -730,7 +780,11 @@ public final class GuardService {
 				continue;
 			}
 			Npc npc = live.get();
-			if (isAtPost(npc, post)) {
+			if (isAtPost(npc.getPosition(), post)) {
+				continue;
+			}
+			if (npc.isAlerted()) {
+				enterCombat(respawnId);
 				continue;
 			}
 			startWalk(respawnId, npc.getGlobalID());
@@ -757,34 +811,24 @@ public final class GuardService {
 	}
 
 	/**
-	 * Every {@value #NEAR_TICK_SECONDS}s: only watches already within {@link #NEAR_DIST}.
-	 * Stops itself when no near walkers remain.
+	 * Every {@value #NEAR_TICK_SECONDS}s: only ids in {@link #nearWatches}.
+	 * Stops itself when that set is empty.
 	 */
 	private void nearTick() {
 		if (nearTimer == null) {
 			return;
 		}
 		long now = System.currentTimeMillis();
-		boolean anyNear = false;
-		for (Long respawnId : new ArrayList<>(watches.keySet())) {
+		for (Long respawnId : new ArrayList<>(nearWatches)) {
 			Watch watch = watches.get(respawnId);
 			if (watch == null || watch.timer != null || watch.nextDueMs > now
 					|| combat.contains(respawnId)) {
+				leaveNear(respawnId);
 				continue;
 			}
-			GuardPost post = posts.get(respawnId);
-			Npc live = liveNpc(respawnId, watch);
-			if (post == null || live == null) {
-				stopWatch(respawnId);
-				continue;
-			}
-			if (!isNearPost(live, post)) {
-				continue;
-			}
-			anyNear = true;
 			walkTick(respawnId);
 		}
-		if (!anyNear) {
+		if (nearWatches.isEmpty()) {
 			stopNearTick();
 		}
 	}
@@ -800,6 +844,10 @@ public final class GuardService {
 		Npc live = World.getNpc(npcId);
 		if (live == null || live.isDead()) {
 			stopWatch(respawnId);
+			return;
+		}
+		if (live.isAlerted()) {
+			enterCombat(respawnId);
 			return;
 		}
 		float fromYaw = 0f;
@@ -867,7 +915,11 @@ public final class GuardService {
 				stopWatch(respawnId);
 				return;
 			}
-			if (!isAtPost(still, post)) {
+			if (still.isAlerted()) {
+				enterCombat(respawnId);
+				return;
+			}
+			if (!isAtPost(still.getPosition(), post)) {
 				startWalk(respawnId, still.getGlobalID());
 				return;
 			}
@@ -933,8 +985,18 @@ public final class GuardService {
 	private void stopWatch(long respawnId) {
 		Watch watch = watches.remove(respawnId);
 		killTimer(watch);
+		nearWatches.remove(respawnId);
 		if (watches.isEmpty()) {
 			stopGlobalTick();
+			stopNearTick();
+		} else if (nearWatches.isEmpty()) {
+			stopNearTick();
+		}
+	}
+
+	private void leaveNear(long respawnId) {
+		nearWatches.remove(respawnId);
+		if (nearWatches.isEmpty()) {
 			stopNearTick();
 		}
 	}
@@ -956,10 +1018,11 @@ public final class GuardService {
 	 * <p>
 	 * The API exposes no active-moveTo query or cancel. Calling {@code moveTo} again is assumed
 	 * to discard the previous target (Rising World 0.9.3). If the engine later queues targets
-	 * instead, re-issue / timeout logic must be revisited.
+	 * or reports movement progress, couple the 30s re-issue to stalled movement instead of
+	 * wall-clock since the last command.
 	 */
 	private static void sendToPost(Npc npc, GuardPost post) {
-		if (npc == null || npc.isDead() || post == null) {
+		if (npc == null || post == null) {
 			return;
 		}
 		unlockIfNeeded(npc);
@@ -989,8 +1052,7 @@ public final class GuardService {
 	}
 
 	/** Squared horizontal (xz) distance to the post, or +inf if position missing. */
-	private static float distSqXZ(Npc npc, GuardPost post) {
-		Vector3f pos = npc.getPosition();
+	private static float distSqXZ(Vector3f pos, GuardPost post) {
 		if (pos == null) {
 			return Float.POSITIVE_INFINITY;
 		}
@@ -1003,16 +1065,8 @@ public final class GuardService {
 	 * True if horizontal (xz) distance to the post is within {@link #ARRIVE_DIST}.
 	 * Uses squared distance (no sqrt).
 	 */
-	private static boolean isAtPost(Npc npc, GuardPost post) {
-		return distSqXZ(npc, post) <= ARRIVE_DIST_SQ;
-	}
-
-	/**
-	 * True if horizontal (xz) distance to the post is within {@link #NEAR_DIST}.
-	 * Near zone uses the faster {@link #nearTick} poll.
-	 */
-	private static boolean isNearPost(Npc npc, GuardPost post) {
-		return distSqXZ(npc, post) <= NEAR_DIST_SQ;
+	private static boolean isAtPost(Vector3f pos, GuardPost post) {
+		return distSqXZ(pos, post) <= ARRIVE_DIST_SQ;
 	}
 
 	/** US-locale {@code (x, y, z)} with one decimal for chat. */
@@ -1065,27 +1119,8 @@ public final class GuardService {
 				"walk near",
 				NEAR_TICK_SECONDS,
 				isRunning(nearTimer),
-				nearWatchSummary()));
+				formatIds(nearWatches)));
 		player.sendTextMessage(out.toString());
-	}
-
-	private String nearWatchSummary() {
-		if (watches.isEmpty()) {
-			return "-";
-		}
-		List<Long> near = new ArrayList<>();
-		for (Map.Entry<Long, Watch> entry : watches.entrySet()) {
-			long respawnId = entry.getKey();
-			if (combat.contains(respawnId)) {
-				continue;
-			}
-			GuardPost post = posts.get(respawnId);
-			Npc live = liveNpc(respawnId, entry.getValue());
-			if (post != null && live != null && isNearPost(live, post)) {
-				near.add(respawnId);
-			}
-		}
-		return formatIds(near);
 	}
 
 	private static boolean isRunning(Timer timer) {

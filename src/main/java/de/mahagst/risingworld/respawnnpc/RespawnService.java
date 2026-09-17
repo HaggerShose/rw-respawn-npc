@@ -23,7 +23,7 @@ import net.risingworld.api.utils.Vector3f;
 /**
  * Respawn domain logic: RAM id maps, death -> one-shot timer, spawn replacement, register/update commands.
  * Snapshot is captured at register/{@code /respawn-update}, never on death.
- * Guard behaviour lives in {@code GuardService}; this class only fires hooks after spawn/remove.
+ * Guard behaviour lives in {@code GuardService}; this class only fires hooks after spawn/remove/pending.
  */
 public final class RespawnService implements Listener {
 	/** Cap for interval after converting minutes (24h). */
@@ -49,6 +49,9 @@ public final class RespawnService implements Listener {
 	/** Fired after a successful DB delete in {@link #drop} so guard RAM is cleared. */
 	private LongConsumer onRespawnRemoved = id -> {
 	};
+	/** Fired after a death timer is scheduled so guard can drop proximity until respawn. */
+	private LongConsumer onPending = id -> {
+	};
 	/** Optional label for list colouring (e.g. walking / at post). */
 	private LongFunction<String> guardStatus = id -> "";
 	/** Optional formatted post coords for list lines. */
@@ -64,11 +67,17 @@ public final class RespawnService implements Listener {
 	 *
 	 * @param onBodyReplaced   after spawn/rebind (respawnId, new body)
 	 * @param onRespawnRemoved after successful remove (respawnId)
+	 * @param onPending        after a death timer is started (respawnId)
 	 */
-	public void setGuardHooks(BiConsumer<Long, Npc> onBodyReplaced, LongConsumer onRespawnRemoved) {
+	public void setGuardHooks(
+			BiConsumer<Long, Npc> onBodyReplaced,
+			LongConsumer onRespawnRemoved,
+			LongConsumer onPending) {
 		this.onBodyReplaced = onBodyReplaced != null ? onBodyReplaced : (id, npc) -> {
 		};
 		this.onRespawnRemoved = onRespawnRemoved != null ? onRespawnRemoved : id -> {
+		};
+		this.onPending = onPending != null ? onPending : id -> {
 		};
 	}
 
@@ -524,6 +533,7 @@ public final class RespawnService implements Listener {
 		Timer timer = new Timer(1f, delay, 0, () -> plugin.enqueue(() -> onRespawnDue(respawnId, generation)));
 		state.timer = timer;
 		timer.start();
+		onPending.accept(respawnId);
 	}
 
 	/** Invalidate generation so already-enqueued work no-ops, then kill the RW timer. */
