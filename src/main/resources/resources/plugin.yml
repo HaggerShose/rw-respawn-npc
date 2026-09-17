@@ -1,6 +1,6 @@
 name: RespawnNpc
 main: de.mahagst.risingworld.respawnnpc.RespawnNpcPlugin
-version: 0.8.7
+version: 0.9.3
 api: 0.9.3
 author: mahagst
 description: Respawn NPCs after death
