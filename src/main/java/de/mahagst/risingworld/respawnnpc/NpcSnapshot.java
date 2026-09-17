@@ -9,16 +9,23 @@ import net.risingworld.api.objects.Skin;
 import net.risingworld.api.utils.Vector3f;
 
 /**
- * Capture every readable NPC field. Apply only fields that have setters.
- * Secondary item and pregnancy are stored, not restored.
+ * Capture every readable NPC field into a {@link RespawnNpc}. Apply only fields that have setters.
+ * Secondary hand item and pregnancy are stored for later API versions and ignored on apply.
  */
 final class NpcSnapshot {
 	private NpcSnapshot() {
 	}
 
 	/**
-	 * @param spawnPos spawn pose position (typically the admin's position)
-	 * @param yaw horizontal facing in degrees (typically the admin's yaw)
+	 * Build a full snapshot row from a live NPC plus an explicit spawn pose.
+	 *
+	 * @param npc             source body (attributes, clothes, equipment)
+	 * @param spawnPos        spawn pose position (typically the admin's position)
+	 * @param yaw             horizontal facing in degrees (typically the admin's yaw)
+	 * @param respawnId       0 on insert; real id on replace-snapshot
+	 * @param intervalSeconds death delay
+	 * @param nextRespawn     pending due time or null
+	 * @param createdAt       row creation epoch ms
 	 */
 	static RespawnNpc capture(
 			Npc npc,
@@ -122,6 +129,10 @@ final class NpcSnapshot {
 				npc.isPregnant());
 	}
 
+	/**
+	 * Restore settable fields onto a freshly spawned body (name, vitals, clothes, skin, equipment, flags).
+	 * Secondary item and pregnancy are intentionally not applied.
+	 */
 	static void apply(Npc npc, RespawnNpc saved) {
 		npc.setName(saved.name());
 		npc.setHealth(saved.health());

@@ -32,11 +32,11 @@ No second plugin, no `AdminAccess` class, no separate guard.db.
 6. NPC dies (NpcDeathEvent, not cancelled)
 7. One-shot timer (if none pending)
 8. Timer -> spawnNpc at spawn pose -> apply snapshot -> rebind npc id
-9. If guard post exists: WAITING until a nearby player, then `moveTo`
-10. At post (`dist <= 0.1`): turn + lock. Walk/combat without nearby player: `forceReplace` then WAITING.
+9. If guard post exists: settle 2s, then `moveTo` post
+10. At post (`dist <= 0.1`): turn + lock. Watch removed (status "at post").
 ```
 
-Global guard tick every 2s (0.5 Hz). Death never overwrites the snapshot. Players install nothing.
+Global guard tick every 2s only while walking (arrive poll). Death never overwrites the snapshot. Players install nothing.
 
 ## Commands
 
@@ -78,7 +78,7 @@ Interval: `0` or less -> `MIN_TEST_SECONDS`. Else `minutes * 60`, cap **86400**.
 - Behaviour / attack reaction: `set*` if overridden flag saved, else `reset*`.
 - `/respawn-now`: ignore death from that `delete()` via `ignoringDeathNpcIds`.
 - Commands: single `PlayerCommandEvent` on the plugin; `setCancelled(true)` when handled.
-- Guard phases stay in the `watches` map: WAITING (hold at spawn, no `moveTo`) / WALKING / COMBAT / AT_POST. Global 0.5 Hz tick (`TICK_SECONDS = 2`); COMBAT uses `nextDueMs` +10s. Hard rule: no player within 128m (xz) and not at post -> `forceReplace` then WAITING. AT_POST without player: ignore. AT_POST + alerted + player -> unlock COMBAT. Arrive: turn + lock, then AT_POST watch (not removed). Startup: at post -> lock; else `forceReplace`; missing body gets AT_POST watch until loaded. No stuck tracker.
+- Guard core: spawn/make/enable -> `moveTo` post -> arrive (`dist^2 <= 0.1^2`) -> step-turn -> lock. Watch only while walking (incl. turn). After lock: `stopWatch`, list shows "at post". Global 0.5 Hz tick is arrive poll only. No combat, no player gate, no `forceReplace` from guard. Startup: at post -> lock; off-post -> walk; missing body skipped.
 
 ```text
 NpcDeathEvent (RespawnService)
@@ -93,7 +93,7 @@ At most one pending `Timer` per `respawn_id`. Startup: one `findAll()` fills RAM
 
 One file per world: `getPath() + "/" + World.getName() + ".db"` (path-unsafe chars in the name become `_`). `PRAGMA foreign_keys = ON`, `journal_mode=DELETE`. Checkpoint on disable.
 
-RAM maps: `current_npc_id -> respawn_id`, `respawn_id -> current_npc_id`, `respawn_id -> interval_seconds`. Death filter and `livingNpcForRespawn` use RAM (no full-row DB). Guard posts: RAM map in `GuardService` (hot path); DB only on enable load / make / remove. Guard watches (`respawn_id -> npcId + phase + nextDueMs`) stay in RAM including AT_POST.
+RAM maps: `current_npc_id -> respawn_id`, `respawn_id -> current_npc_id`, `respawn_id -> interval_seconds`. Death filter and `livingNpcForRespawn` use RAM (no full-row DB). Guard posts: RAM map in `GuardService` (hot path); DB only on enable load / make / remove. Guard watches (`respawn_id -> npcId`) only while walking.
 
 ```text
 respawn_npcs:

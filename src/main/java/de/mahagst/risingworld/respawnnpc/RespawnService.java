@@ -24,10 +24,12 @@ import net.risingworld.api.utils.Quaternion;
 import net.risingworld.api.utils.Vector3f;
 
 /**
- * Respawn domain: maps, timers, death -> schedule, spawn replacement, register/update.
- * Snapshot is taken at register/update, never on death.
+ * Respawn domain logic: RAM id maps, death -> one-shot timer, spawn replacement, register/update commands.
+ * Snapshot is captured at register/{@code /respawn-update}, never on death.
+ * Guard behaviour lives in {@code GuardFeature}; this class only fires hooks after spawn/remove.
  */
 public final class RespawnService implements Listener {
+	/** Cap for interval after converting minutes (24h). */
 	static final int MAX_INTERVAL_SECONDS = 24 * 60 * 60;
 	/** Effective delay when /make-respawn gets 0 or negative minutes (quick test). */
 	static final int MIN_TEST_SECONDS = 1;
@@ -35,22 +37,26 @@ public final class RespawnService implements Listener {
 	private final Plugin plugin;
 	private final RespawnRepository repository;
 
-	/** current npc id -> respawn_id */
+	/** Fast death filter: living body global id -> respawn_id. */
 	private final Map<Long, Long> npcIdToRespawnId = new HashMap<>();
-	/** respawn_id -> current npc id */
+	/** Reverse map for {@link #livingNpcForRespawn} without a DB round-trip. */
 	private final Map<Long, Long> respawnIdToNpcId = new HashMap<>();
-	/** respawn_id -> interval_seconds */
+	/** Interval cache so death scheduling does not need a full-row {@code find}. */
 	private final Map<Long, Integer> respawnIdToInterval = new HashMap<>();
-	/** At most one pending RW timer per respawn_id. */
+	/** At most one pending RW respawn timer per respawn_id. */
 	private final Map<Long, Timer> timers = new HashMap<>();
-	/** Deaths caused by /respawn-now delete() must not start a timer. */
+	/** Deaths caused by {@code /respawn-now} {@code delete()} must not start a timer. */
 	private final Set<Long> ignoringDeathNpcIds = new HashSet<>();
 
+	/** Fired after a successful {@link #spawnReplacement} (guard walks if post exists). */
 	private BiConsumer<Long, Npc> onBodyReplaced = (id, npc) -> {
 	};
+	/** Fired before DB delete in {@link #drop} so guard RAM is cleared. */
 	private LongConsumer onRespawnRemoved = id -> {
 	};
+	/** Optional label for list colouring (e.g. walking / at post). */
 	private LongFunction<String> guardStatus = id -> "";
+	/** Optional formatted post coords for list lines. */
 	private LongFunction<String> guardPostPos = id -> "";
 
 	public RespawnService(Plugin plugin, RespawnRepository repository) {
@@ -58,6 +64,12 @@ public final class RespawnService implements Listener {
 		this.repository = repository;
 	}
 
+	/**
+	 * Wire guard callbacks. Nulls become no-ops.
+	 *
+	 * @param onBodyReplaced  after spawn/rebind (respawnId, new body)
+	 * @param onRespawnRemoved before/around remove (respawnId)
+	 */
 	public void setGuardHooks(BiConsumer<Long, Npc> onBodyReplaced, LongConsumer onRespawnRemoved) {
 		this.onBodyReplaced = onBodyReplaced != null ? onBodyReplaced : (id, npc) -> {
 		};
@@ -65,32 +77,44 @@ public final class RespawnService implements Listener {
 		};
 	}
 
+	/** List/info guard state string provider ({@code GuardFeature#statusOf}). */
 	public void setGuardStatus(LongFunction<String> guardStatus) {
 		this.guardStatus = guardStatus != null ? guardStatus : id -> "";
 	}
 
+	/** List/info guard post position provider ({@code GuardFeature#postPosOf}). */
 	public void setGuardPostPos(LongFunction<String> guardPostPos) {
 		this.guardPostPos = guardPostPos != null ? guardPostPos : id -> "";
 	}
 
+	/**
+	 * Load RAM maps from one {@code findAll}, resume pending death timers, register this as event listener.
+	 */
 	public void enable() {
 		loadAndResume();
 		plugin.registerEventListener(this);
 	}
 
+	/** Cancel all pending respawn timers and unregister the death listener. */
 	public void disable() {
 		cancelAllTimers();
 		plugin.unregisterEventListener(this);
 	}
 
+	/** Full DB row by respawn id (commands / spawn due). */
 	public Optional<RespawnNpc> find(long respawnId) {
 		return repository.find(respawnId);
 	}
 
+	/** Full DB row by current living body id (e.g. already-registered check). */
 	public Optional<RespawnNpc> findByNpcId(long npcId) {
 		return repository.findByNpcId(npcId);
 	}
 
+	/**
+	 * Living world NPC for a respawn id via RAM {@link #respawnIdToNpcId} + {@link World#getNpc}.
+	 * Empty if unknown, unloaded, or dead. No DB read.
+	 */
 	public Optional<Npc> livingNpcForRespawn(long respawnId) {
 		Long npcId = respawnIdToNpcId.get(respawnId);
 		if (npcId == null) {
@@ -103,6 +127,9 @@ public final class RespawnService implements Listener {
 		return Optional.of(npc);
 	}
 
+	/**
+	 * Convert admin minutes to stored seconds: {@code <=0} -> {@link #MIN_TEST_SECONDS}, else minutes*60 capped at {@link #MAX_INTERVAL_SECONDS}.
+	 */
 	static int intervalSecondsFromMinutes(int minutes) {
 		if (minutes <= 0) {
 			return MIN_TEST_SECONDS;
@@ -110,6 +137,10 @@ public final class RespawnService implements Listener {
 		return Math.min(minutes * 60, MAX_INTERVAL_SECONDS);
 	}
 
+	/**
+	 * {@code /make-respawn}: capture snapshot from the NPC, spawn pose from the player, insert DB + RAM maps.
+	 * Fails if this body is already registered.
+	 */
 	public void register(Player player, Npc npc, int intervalSeconds) {
 		Optional<RespawnNpc> existing = repository.findByNpcId(npc.getGlobalID());
 		if (existing.isPresent()) {
@@ -138,6 +169,12 @@ public final class RespawnService implements Listener {
 				+ " (spawn at your position)");
 	}
 
+	/**
+	 * {@code /respawn-update} dispatcher: snapshot, pose, both, or timer only.
+	 *
+	 * @param focusedNpc live body for snapshot modes; may be null for pose/timer with {@code #id}
+	 * @param timerMinutes  only used for {@link UpdateMode#TIMER}
+	 */
 	public void applyUpdate(
 			Player player,
 			RespawnNpc saved,
@@ -160,6 +197,9 @@ public final class RespawnService implements Listener {
 		}
 	}
 
+	/**
+	 * {@code /respawn-now}: spawn replacement immediately (deletes living body after successful spawn).
+	 */
 	public void now(Player player, RespawnNpc saved) {
 		if (!spawnReplacement(saved)) {
 			player.sendTextMessage("Could not spawn replacement NPC.");
@@ -168,7 +208,12 @@ public final class RespawnService implements Listener {
 		player.sendTextMessage("NPC reset.");
 	}
 
-	/** Guard stuck recovery: same as /respawn-now without player message. */
+	/**
+	 * Silent spawn replacement (same as {@link #now} without chat).
+	 * Kept for later recovery paths; guard core no longer calls this.
+	 *
+	 * @return false if row missing or spawn failed
+	 */
 	public boolean forceReplace(long respawnId) {
 		Optional<RespawnNpc> saved = repository.find(respawnId);
 		if (saved.isEmpty()) {
@@ -177,15 +222,18 @@ public final class RespawnService implements Listener {
 		return spawnReplacement(saved.get());
 	}
 
+	/** {@code /respawn-remove}: drop DB, timers, guard hook, RAM maps. Living NPC stays in world. */
 	public void remove(Player player, RespawnNpc saved) {
 		drop(saved);
 		player.sendTextMessage("NPC removed.");
 	}
 
+	/** {@code /respawn-info}: one formatted chat line for this entry. */
 	public void info(Player player, RespawnNpc saved) {
 		player.sendTextMessage(formatEntry(saved, World.getNpc(saved.currentNpcId())));
 	}
 
+	/** {@code /respawn-list}: all entries in one coloured chat block. */
 	public void list(Player player) {
 		List<RespawnNpc> all = repository.findAll();
 		if (all.isEmpty()) {
@@ -200,6 +248,10 @@ public final class RespawnService implements Listener {
 		player.sendTextMessage(out.toString());
 	}
 
+	/**
+	 * Death hot path: ignore-set / unknown body / already pending -> return.
+	 * Else write {@code next_respawn}, schedule one-shot timer from RAM interval.
+	 */
 	@EventMethod
 	public void onNpcDeath(NpcDeathEvent event) {
 		if (event.isCancelled()) {
@@ -235,6 +287,7 @@ public final class RespawnService implements Listener {
 		schedule(respawnId, interval);
 	}
 
+	/** Overwrite snapshot columns; keeps spawn pose, interval, pending, current npc id. */
 	private boolean updateSnapshot(Player player, RespawnNpc saved, Npc focusedNpc, boolean quietSuccess) {
 		Npc live = focusedNpc;
 		if (live == null) {
@@ -267,6 +320,7 @@ public final class RespawnService implements Listener {
 		return true;
 	}
 
+	/** Save spawn pose from the admin's current position/yaw. Does not touch guard_posts. */
 	private boolean updatePose(Player player, RespawnNpc saved, boolean quietSuccess) {
 		Vector3f spawnPos = player.getPosition();
 		if (spawnPos == null) {
@@ -289,6 +343,7 @@ public final class RespawnService implements Listener {
 		return true;
 	}
 
+	/** Persist interval and refresh {@link #respawnIdToInterval}. Does not restart a pending timer. */
 	private void updateInterval(Player player, RespawnNpc saved, int intervalSeconds) {
 		if (saved.intervalSeconds() == intervalSeconds) {
 			player.sendTextMessage("Interval not changed (already " + intervalSeconds + "s).");
@@ -299,6 +354,7 @@ public final class RespawnService implements Listener {
 		player.sendTextMessage("Interval updated to " + intervalSeconds + "s (#" + saved.respawnId() + ").");
 	}
 
+	/** Timer fired: load row and {@link #spawnReplacement}. */
 	private void onRespawnDue(long respawnId) {
 		Optional<RespawnNpc> savedOpt = repository.find(respawnId);
 		if (savedOpt.isEmpty()) {
@@ -308,7 +364,12 @@ public final class RespawnService implements Listener {
 		spawnReplacement(savedOpt.get());
 	}
 
-	/** Silent spawn at register-time pose, apply snapshot, rebind current npc id. */
+	/**
+	 * Spawn at register-time pose, apply snapshot, delete old body if still alive (ignore that death),
+	 * rebind RAM maps + DB {@code current_npc_id}, clear pending, fire {@link #onBodyReplaced}.
+	 *
+	 * @return false if {@code spawnNpc} returned null
+	 */
 	private boolean spawnReplacement(RespawnNpc saved) {
 		Npc living = World.getNpc(saved.currentNpcId());
 		boolean livingExists = living != null && !living.isDead();
@@ -338,6 +399,7 @@ public final class RespawnService implements Listener {
 		return true;
 	}
 
+	/** Cancel timer, guard-removed hook, DB delete, clear RAM maps for this row. */
 	private void drop(RespawnNpc saved) {
 		cancelTimer(saved.respawnId());
 		onRespawnRemoved.accept(saved.respawnId());
@@ -350,6 +412,7 @@ public final class RespawnService implements Listener {
 		respawnIdToInterval.remove(saved.respawnId());
 	}
 
+	/** Replace any existing timer with a one-shot that enqueues {@link #onRespawnDue}. */
 	private void schedule(long respawnId, float delaySeconds) {
 		cancelTimer(respawnId);
 		float delay = Math.max(delaySeconds, 0.1f);
@@ -396,6 +459,7 @@ public final class RespawnService implements Listener {
 		}
 	}
 
+	/** One coloured chat line: state, interval, spawn/post/now positions. */
 	private String formatEntry(RespawnNpc saved, Npc current) {
 		boolean pending = saved.nextRespawn() != null;
 		boolean alive = current != null && !current.isDead();
@@ -454,6 +518,10 @@ public final class RespawnService implements Listener {
 		return String.format(Locale.US, "(%.1f, %.1f, %.1f)", x, y, z);
 	}
 
+	/**
+	 * Modes for {@link #applyUpdate}.
+	 * {@link #POSE} never touches the guard post.
+	 */
 	public enum UpdateMode {
 		SNAPSHOT, POSE, ALL, TIMER
 	}

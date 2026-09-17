@@ -17,10 +17,11 @@ import net.risingworld.api.objects.Player;
 import net.risingworld.api.utils.Vector3f;
 
 /**
- * Plugin entry: lifecycle, admin gate, all commands, focus helpers.
- * Domain: {@link RespawnService}; guard runtime: {@link GuardFeature}.
+ * Plugin entry: lifecycle, admin gate, all chat commands, LoS/#id focus helpers.
+ * Domain logic: {@link RespawnService}. Guard walk/arrive: {@link GuardFeature}.
  */
 public class RespawnNpcPlugin extends Plugin implements Listener {
+	/** Max LoS / nearest-NPC focus distance in world units. */
 	static final float LOS_DISTANCE = 10f;
 	private static final Set<String> ALLOWED_UIDS = Set.of(
 			"76561198002368372");
@@ -30,6 +31,9 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 	private RespawnService respawn;
 	private GuardFeature guard;
 
+	/**
+	 * Open world DB, create schema, wire respawn + guard, register command listener.
+	 */
 	@Override
 	public void onEnable() {
 		String dbFile = worldDbFileName();
@@ -41,7 +45,7 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 		repository = new RespawnRepository(database);
 		repository.createSchema();
 		respawn = new RespawnService(this, repository);
-		guard = new GuardFeature(this, repository, respawn::livingNpcForRespawn, respawn::forceReplace);
+		guard = new GuardFeature(this, repository, respawn::livingNpcForRespawn);
 		respawn.setGuardHooks(guard::onBodyReplaced, guard::onRespawnRemoved);
 		respawn.setGuardStatus(guard::statusOf);
 		respawn.setGuardPostPos(guard::postPosOf);
@@ -51,6 +55,7 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 		System.out.println("[RespawnNpc] enabled (" + dbFile + ")");
 	}
 
+	/** Tear down guard, cancel respawn timers, checkpoint and close SQLite. */
 	@Override
 	public void onDisable() {
 		if (guard != null) {
@@ -66,6 +71,11 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 		System.out.println("[RespawnNpc] disabled");
 	}
 
+	/**
+	 * Chat command router. Non-plugin commands are ignored.
+	 * Non-allowed players get no reply (command not cancelled for others' plugins).
+	 * Own commands are cancelled after handling.
+	 */
 	@EventMethod
 	public void onCommand(PlayerCommandEvent event) {
 		String[] args = event.getCommand().split(" ");
@@ -95,6 +105,7 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 		}
 	}
 
+	/** True if {@code cmd} is one of this plugin's slash commands. */
 	private static boolean isOurs(String cmd) {
 		return cmd.equals("/make-respawn")
 				|| cmd.equals("/respawn-update")
@@ -106,6 +117,9 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 				|| cmd.equals("/guard-remove");
 	}
 
+	/**
+	 * Admin gate: {@link Player#isAdmin()} or UID in {@link #ALLOWED_UIDS}.
+	 */
 	private static boolean isAllowed(Player player) {
 		if (player.isAdmin()) {
 			return true;

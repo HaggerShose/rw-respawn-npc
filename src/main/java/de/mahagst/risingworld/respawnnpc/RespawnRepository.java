@@ -12,7 +12,10 @@ import java.util.Optional;
 import de.mahagst.risingworld.respawnnpc.guard.GuardPost;
 import net.risingworld.api.database.Database;
 
-/** SQLite persistence for respawn_npcs + guard_posts (one db file per world). */
+/**
+ * SQLite persistence for {@code respawn_npcs} + {@code guard_posts} (one DB file per world).
+ * Callers own the {@link Database} lifecycle; this class only runs SQL.
+ */
 public final class RespawnRepository {
 	private final Database database;
 
@@ -20,6 +23,10 @@ public final class RespawnRepository {
 		this.database = database;
 	}
 
+	/**
+	 * Create tables if missing, enable foreign keys, ensure columns added in later versions.
+	 * Safe to call on every plugin enable.
+	 */
 	void createSchema() {
 		database.execute("PRAGMA foreign_keys = ON");
 		database.execute("PRAGMA journal_mode=DELETE");
@@ -92,6 +99,7 @@ public final class RespawnRepository {
 				""");
 	}
 
+	/** Full row by primary key, including clothes BLOB. */
 	public Optional<RespawnNpc> find(long respawnId) {
 		var sql = "SELECT * FROM respawn_npcs WHERE respawn_id = ?";
 		try (var prep = database.getConnection().prepareStatement(sql)) {
@@ -107,6 +115,7 @@ public final class RespawnRepository {
 		return Optional.empty();
 	}
 
+	/** Full row whose {@code current_npc_id} matches the living body id. */
 	Optional<RespawnNpc> findByNpcId(long npcId) {
 		var sql = "SELECT * FROM respawn_npcs WHERE current_npc_id = ?";
 		try (var prep = database.getConnection().prepareStatement(sql)) {
@@ -122,6 +131,7 @@ public final class RespawnRepository {
 		return Optional.empty();
 	}
 
+	/** All respawn rows (startup maps + list). Expensive if many rows / large clothes blobs. */
 	List<RespawnNpc> findAll() {
 		var npcs = new ArrayList<RespawnNpc>();
 		var sql = "SELECT * FROM respawn_npcs ORDER BY respawn_id";
@@ -136,6 +146,11 @@ public final class RespawnRepository {
 		return npcs;
 	}
 
+	/**
+	 * Insert a new row; returns generated {@code respawn_id}.
+	 *
+	 * @return empty on SQL failure
+	 */
 	Optional<Long> insert(RespawnNpc npc) {
 		var sql = """
 				INSERT INTO respawn_npcs (
@@ -212,6 +227,7 @@ public final class RespawnRepository {
 		}
 	}
 
+	/** Update spawn pose columns only (admin position/yaw). */
 	boolean setSpawnPose(long respawnId, float posX, float posY, float posZ, float yaw) {
 		var sql = """
 				UPDATE respawn_npcs SET
@@ -232,7 +248,11 @@ public final class RespawnRepository {
 		}
 	}
 
-	/** null next_respawn means idle (no timer pending). */
+	/**
+	 * Set or clear pending respawn due time.
+	 *
+	 * @param nextRespawn epoch ms when due, or null for idle (no timer pending)
+	 */
 	void setNextRespawn(long respawnId, Long nextRespawn) {
 		var sql = "UPDATE respawn_npcs SET next_respawn = ? WHERE respawn_id = ?";
 		try (var prep = database.getConnection().prepareStatement(sql)) {
@@ -244,6 +264,7 @@ public final class RespawnRepository {
 		}
 	}
 
+	/** Persist death-to-respawn delay in seconds. */
 	void setIntervalSeconds(long respawnId, int intervalSeconds) {
 		var sql = "UPDATE respawn_npcs SET interval_seconds = ? WHERE respawn_id = ?";
 		try (var prep = database.getConnection().prepareStatement(sql)) {
@@ -255,6 +276,7 @@ public final class RespawnRepository {
 		}
 	}
 
+	/** Rebind after spawn: store the new body's global id. */
 	void setCurrentNpcId(long respawnId, long npcId) {
 		var sql = "UPDATE respawn_npcs SET current_npc_id = ? WHERE respawn_id = ?";
 		try (var prep = database.getConnection().prepareStatement(sql)) {
@@ -266,6 +288,7 @@ public final class RespawnRepository {
 		}
 	}
 
+	/** Delete respawn row; {@code guard_posts} cascade via FK. */
 	void delete(long respawnId) {
 		var sql = "DELETE FROM respawn_npcs WHERE respawn_id = ?";
 		try (var prep = database.getConnection().prepareStatement(sql)) {
@@ -276,6 +299,7 @@ public final class RespawnRepository {
 		}
 	}
 
+	/** All guard posts for enable-time RAM load. */
 	public List<GuardPost> findAllGuardPosts() {
 		var list = new ArrayList<GuardPost>();
 		var sql = """
@@ -293,6 +317,11 @@ public final class RespawnRepository {
 		return list;
 	}
 
+	/**
+	 * Insert or replace the guard post for a respawn id (UPSERT).
+	 *
+	 * @return false on SQL failure
+	 */
 	public boolean setGuardPost(long respawnId, float x, float y, float z, float yaw) {
 		var sql = """
 				INSERT INTO guard_posts (respawn_id, pos_x, pos_y, pos_z, yaw)
@@ -316,6 +345,7 @@ public final class RespawnRepository {
 		}
 	}
 
+	/** Remove guard post row; respawn NPC row stays. */
 	public boolean clearGuardPost(long respawnId) {
 		var sql = "DELETE FROM guard_posts WHERE respawn_id = ?";
 		try (var prep = database.getConnection().prepareStatement(sql)) {
