@@ -60,6 +60,7 @@ No name clash with RespawnChest (`/make-refill`, `/refill-*`).
 | `/respawn-remove [#id]`           | Drop DB row + timer + guard post (FK CASCADE + RAM clear). Living NPC stays.                                                                                      |
 | `/respawn-info [#id]`             | Interval, pending / due-no-timer, spawn/current pos, type/name.                                                                                                   |
 | `/respawn-list`                   | All entries (one chat block: state, spawn/now, interval). `pending Xs` = RAM timer; `due, no timer` = DB `next_respawn` without a live timer (restart can retry). |
+| `/respawn-list timer`             | Active guard ticks (return / idle / medium / fast / combat / walk far / walk near) with interval and covered ids.                                                  |
 | `/make-guard <id>`                | Guard post = your xyz + rotation. Living NPC walks there; on arrive facing+lock.                                                                                  |
 | `/guard-remove <id>`              | Clear guard post. NPC not moved.                                                                                                                                  |
 

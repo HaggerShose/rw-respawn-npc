@@ -43,6 +43,7 @@ Target the NPC first (except `/respawn-list` and optional `#id` / `id` forms), t
 | `/respawn-remove [#id]`           | Unregister. The living NPC stays.                                                                                    |
 | `/respawn-info [#id]`             | Show interval, pending state, remaining time, spawn/current position.                                                |
 | `/respawn-list`                   | List all registered NPCs (state, spawn/current pose, interval).                                                      |
+| `/respawn-list timer`             | List active guard checks (ON/off, interval, covered `#id`s).                                                         |
 | `/make-guard <id>`                | Guard post = your position (+ rotation). NPC walks there, then faces and locks.                                      |
 | `/guard-remove <id>`              | Clear guard post. NPC stays put.                                                                                     |
 

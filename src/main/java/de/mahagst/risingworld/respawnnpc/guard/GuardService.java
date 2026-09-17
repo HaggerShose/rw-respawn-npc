@@ -1026,6 +1026,120 @@ public final class GuardService {
 	}
 
 	/**
+	 * {@code /respawn-list timer}: which guard ticks are running and which respawn ids they cover.
+	 */
+	public void listTimers(Player player) {
+		StringBuilder out = new StringBuilder();
+		out.append("<color=#aaaaaa>Guard timers</color>");
+		out.append('\n').append(timerLine(
+				"return",
+				RETURN_SECONDS,
+				isRunning(returnTimer),
+				"posts=" + posts.size()));
+		out.append('\n').append(timerLine(
+				"idle",
+				PROX_IDLE_SECONDS,
+				isRunning(idleProximityTimer),
+				"posts=" + posts.size()));
+		out.append('\n').append(timerLine(
+				"medium",
+				PROX_MEDIUM_SECONDS,
+				isRunning(mediumTimer),
+				formatIds(medium)));
+		out.append('\n').append(timerLine(
+				"fast",
+				PROX_FAST_SECONDS,
+				isRunning(fastTimer),
+				formatIds(fast)));
+		out.append('\n').append(timerLine(
+				"combat",
+				COMBAT_SECONDS,
+				isRunning(combatTimer),
+				formatIds(combat)));
+		out.append('\n').append(timerLine(
+				"walk far",
+				TICK_SECONDS,
+				isRunning(globalTimer),
+				formatIds(watches.keySet())));
+		out.append('\n').append(timerLine(
+				"walk near",
+				NEAR_TICK_SECONDS,
+				isRunning(nearTimer),
+				nearWatchSummary()));
+		player.sendTextMessage(out.toString());
+	}
+
+	private String nearWatchSummary() {
+		if (watches.isEmpty()) {
+			return "-";
+		}
+		List<Long> near = new ArrayList<>();
+		for (Map.Entry<Long, Watch> entry : watches.entrySet()) {
+			long respawnId = entry.getKey();
+			if (combat.contains(respawnId)) {
+				continue;
+			}
+			GuardPost post = posts.get(respawnId);
+			Npc live = liveNpc(respawnId, entry.getValue());
+			if (post != null && live != null && isNearPost(live, post)) {
+				near.add(respawnId);
+			}
+		}
+		return formatIds(near);
+	}
+
+	private static boolean isRunning(Timer timer) {
+		return timer != null && !timer.isKilled();
+	}
+
+	private static String formatIds(Iterable<Long> ids) {
+		List<Long> sorted = new ArrayList<>();
+		for (Long id : ids) {
+			if (id != null) {
+				sorted.add(id);
+			}
+		}
+		if (sorted.isEmpty()) {
+			return "-";
+		}
+		sorted.sort(Long::compareTo);
+		StringBuilder sb = new StringBuilder();
+		for (int i = 0; i < sorted.size(); i++) {
+			if (i > 0) {
+				sb.append(' ');
+			}
+			sb.append('#').append(sorted.get(i));
+		}
+		return sb.toString();
+	}
+
+	private static String timerLine(String name, float seconds, boolean on, String detail) {
+		String state = on
+				? "<color=#66ff88>ON</color>"
+				: "<color=#888888>off</color>";
+		String interval = String.format(Locale.US, "%gs", seconds);
+		String body = (detail == null || detail.isBlank() || "-".equals(detail))
+				? ""
+				: "  <color=#cccccc>" + detail + "</color>";
+		return "  <color=#ffffff>" + padRight(name, 10) + "</color> "
+				+ state + "  <color=#aaaaaa>" + padLeft(interval, 5) + "</color>" + body;
+	}
+
+	private static String padRight(String s, int width) {
+		if (s.length() >= width) {
+			return s;
+		}
+		return s + " ".repeat(width - s.length());
+	}
+
+	private static String padLeft(String s, int width) {
+		if (s.length() >= width) {
+			return s;
+		}
+		return " ".repeat(width - s.length()) + s;
+	}
+
+	/**
 	 * Per-guard walk state while not yet locked at post.
 	 * Presence in {@link #watches} means status {@code walking}.
 	 */

@@ -122,7 +122,7 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 			case "/respawn-now" -> withOptionalIdOrFocus(player, args, "/respawn-now [#id]", respawn::now);
 			case "/respawn-remove" -> withOptionalIdOrFocus(player, args, "/respawn-remove [#id]", respawn::remove);
 			case "/respawn-info" -> withOptionalIdOrFocus(player, args, "/respawn-info [#id]", respawn::info);
-			case "/respawn-list" -> respawn.list(player);
+			case "/respawn-list" -> respawnList(player, args);
 			case "/make-guard" -> guardById(player, args, "/make-guard <id>", guard::makeGuard);
 			case "/guard-remove" -> guardById(player, args, "/guard-remove <id>", guard::removeGuard);
 			default -> {
@@ -261,6 +261,21 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 			return;
 		}
 		handler.handle(player, respawnId);
+	}
+
+	/**
+	 * {@code /respawn-list} or {@code /respawn-list timer}.
+	 */
+	private void respawnList(Player player, String[] args) {
+		if (args.length >= 2) {
+			if (args[1].equalsIgnoreCase("timer")) {
+				guard.listTimers(player);
+				return;
+			}
+			player.sendTextMessage("Usage: /respawn-list [timer]");
+			return;
+		}
+		respawn.list(player);
 	}
 
 	/**
