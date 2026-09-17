@@ -128,11 +128,20 @@ public final class RespawnService implements Listener {
 		plugin.registerEventListener(this);
 	}
 
-	/** Cancel all pending respawn timers and unregister the death listener. */
+	/**
+	 * Cancel timers, drop RAM maps and {@link #startupRows}, unregister the death listener.
+	 * Safe if {@link #start()} never ran (load-fail abort).
+	 */
 	public void disable() {
+		boolean started = running;
 		running = false;
 		cancelAllTimers();
-		plugin.unregisterEventListener(this);
+		npcIdToRespawnId.clear();
+		byRespawnId.clear();
+		startupRows = null;
+		if (started) {
+			plugin.unregisterEventListener(this);
+		}
 	}
 
 	/**
@@ -420,7 +429,10 @@ public final class RespawnService implements Listener {
 		player.sendTextMessage("Interval updated to " + intervalSeconds + "s (#" + saved.respawnId() + ").");
 	}
 
-	/** Timer fired: load row and {@link #spawnReplacement} if this generation is still current. */
+	/**
+	 * Timer fired: consume this generation (timer gone, {@code next_respawn} kept on failure),
+	 * then load row and {@link #spawnReplacement}.
+	 */
 	private void onRespawnDue(long respawnId, int generation) {
 		if (!running) {
 			return;
@@ -429,10 +441,10 @@ public final class RespawnService implements Listener {
 		if (state == null || state.generation != generation) {
 			return;
 		}
+		cancelTimer(state);
 		RespawnRepository.FindResult result = repository.find(respawnId);
 		if (!result.ok()) {
 			System.out.println("[RespawnNpc] DB read failed on respawn due #" + respawnId);
-			cancelTimer(state);
 			return;
 		}
 		if (result.row().isEmpty()) {
@@ -445,6 +457,7 @@ public final class RespawnService implements Listener {
 	/**
 	 * Spawn at register-time pose, apply snapshot, delete old body if still alive,
 	 * rebind RAM maps + DB {@code current_npc_id} and clear pending, fire {@link #onBodyReplaced}.
+	 * Cancels a still-running timer only after a successful exchange; failure leaves it in place.
 	 *
 	 * @return false if spawn, apply, or DB write failed
 	 */
@@ -457,9 +470,6 @@ public final class RespawnService implements Listener {
 		Npc spawned = World.spawnNpc(saved.typeId(), saved.variant(), pos, rot, false);
 		if (spawned == null) {
 			System.out.println("[RespawnNpc] spawnNpc returned null for #" + saved.respawnId());
-			if (state != null) {
-				cancelTimer(state);
-			}
 			return false;
 		}
 		try {
@@ -468,18 +478,12 @@ public final class RespawnService implements Listener {
 			e.printStackTrace();
 			System.out.println("[RespawnNpc] apply failed for #" + saved.respawnId() + "; deleting spawned NPC");
 			spawned.delete();
-			if (state != null) {
-				cancelTimer(state);
-			}
 			return false;
 		}
 		long newId = spawned.getGlobalID();
 		if (!repository.completeRespawn(saved.respawnId(), newId)) {
 			System.out.println("[RespawnNpc] completeRespawn failed for #" + saved.respawnId());
 			spawned.delete();
-			if (state != null) {
-				cancelTimer(state);
-			}
 			return false;
 		}
 		if (livingExists) {
@@ -566,8 +570,13 @@ public final class RespawnService implements Listener {
 		String state;
 		String color;
 		if (pending) {
-			long rest = Math.max(0, (saved.nextRespawn() - System.currentTimeMillis()) / 1000);
-			state = "pending " + rest + "s";
+			RespawnState ram = byRespawnId.get(saved.respawnId());
+			if (ram != null && ram.timer != null) {
+				long rest = Math.max(0, (saved.nextRespawn() - System.currentTimeMillis()) / 1000);
+				state = "pending " + rest + "s";
+			} else {
+				state = "due, no timer";
+			}
 			color = "#ffcc66";
 		} else if (current == null) {
 			state = "missing";

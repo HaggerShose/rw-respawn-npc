@@ -401,6 +401,8 @@ public final class GuardService {
 				return;
 			}
 			still.setLocked(true);
+			// set the position to the post position after lock because it fixes the visual position glitch
+			still.setPosition(new Vector3f(post.x(), post.y(), post.z()));
 			stopWatch(respawnId);
 		}));
 		watch.timer = lockDelay;

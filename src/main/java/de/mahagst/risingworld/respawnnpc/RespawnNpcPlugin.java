@@ -51,16 +51,34 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 		respawn.setGuardPostPos(guard::postPosOf);
 		if (!respawn.loadMaps()) {
 			System.out.println("[RespawnNpc] Failed to load respawn rows; plugin not started");
+			abortEnable();
 			return;
 		}
 		if (!guard.loadPosts()) {
 			System.out.println("[RespawnNpc] Failed to load guard posts; plugin not started");
+			abortEnable();
 			return;
 		}
 		respawn.start();
 		guard.startWalks();
 		registerEventListener(this);
 		System.out.println("[RespawnNpc] enabled (" + dbFile + ")");
+	}
+
+	/** Close DB and drop RAM if load failed before start. */
+	private void abortEnable() {
+		if (guard != null) {
+			guard.disable();
+		}
+		if (respawn != null) {
+			respawn.disable();
+		}
+		if (database != null) {
+			database.close();
+			database = null;
+		}
+		guard = null;
+		respawn = null;
 	}
 
 	/** Tear down guard, cancel respawn timers, close SQLite. */
