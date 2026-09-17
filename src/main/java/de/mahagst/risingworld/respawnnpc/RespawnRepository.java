@@ -99,40 +99,33 @@ public final class RespawnRepository {
 				""");
 	}
 
-	/** Full row by primary key, including clothes BLOB. */
-	public Optional<RespawnNpc> find(long respawnId) {
+	/**
+	 * Full row by primary key, including clothes BLOB.
+	 * {@link FindResult#ok()} is false if SQL failed (already logged);
+	 * when ok, empty {@link FindResult#row()} means the id does not exist.
+	 */
+	public FindResult find(long respawnId) {
 		var sql = "SELECT * FROM respawn_npcs WHERE respawn_id = ?";
 		try (var prep = database.getConnection().prepareStatement(sql)) {
 			prep.setLong(1, respawnId);
 			try (var result = prep.executeQuery()) {
 				if (result.next()) {
-					return Optional.of(readNpc(result));
+					return FindResult.hit(readNpc(result));
 				}
 			}
+			return FindResult.miss();
 		} catch (SQLException e) {
 			e.printStackTrace();
+			return FindResult.fail();
 		}
-		return Optional.empty();
 	}
 
-	/** Full row whose {@code current_npc_id} matches the living body id. */
-	Optional<RespawnNpc> findByNpcId(long npcId) {
-		var sql = "SELECT * FROM respawn_npcs WHERE current_npc_id = ?";
-		try (var prep = database.getConnection().prepareStatement(sql)) {
-			prep.setLong(1, npcId);
-			try (var result = prep.executeQuery()) {
-				if (result.next()) {
-					return Optional.of(readNpc(result));
-				}
-			}
-		} catch (SQLException e) {
-			e.printStackTrace();
-		}
-		return Optional.empty();
-	}
-
-	/** All respawn rows (startup maps + list). Expensive if many rows / large clothes blobs. */
-	List<RespawnNpc> findAll() {
+	/**
+	 * All respawn rows (startup maps + list). Expensive if many rows / large clothes blobs.
+	 *
+	 * @return empty if SQL failed (already logged); present list may be empty
+	 */
+	Optional<List<RespawnNpc>> findAll() {
 		var npcs = new ArrayList<RespawnNpc>();
 		var sql = "SELECT * FROM respawn_npcs ORDER BY respawn_id";
 		try (var prep = database.getConnection().prepareStatement(sql);
@@ -140,10 +133,11 @@ public final class RespawnRepository {
 			while (result.next()) {
 				npcs.add(readNpc(result));
 			}
+			return Optional.of(npcs);
 		} catch (SQLException e) {
 			e.printStackTrace();
+			return Optional.empty();
 		}
-		return npcs;
 	}
 
 	/**
@@ -182,7 +176,9 @@ public final class RespawnRepository {
 				""";
 		try (var prep = database.getConnection().prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
 			bindInsert(prep, npc);
-			prep.executeUpdate();
+			if (prep.executeUpdate() <= 0) {
+				return Optional.empty();
+			}
 			try (var keys = prep.getGeneratedKeys()) {
 				if (keys.next()) {
 					return Optional.of(keys.getLong(1));
@@ -219,8 +215,44 @@ public final class RespawnRepository {
 			prep.setString(i++, npc.typeName());
 			i = bindSnapshotBody(prep, i, npc);
 			prep.setLong(i, npc.respawnId());
-			prep.executeUpdate();
-			return true;
+			return prep.executeUpdate() > 0;
+		} catch (SQLException e) {
+			e.printStackTrace();
+			return false;
+		}
+	}
+
+	/** Snapshot attributes and spawn pose in one statement ({@code /respawn-update all}). */
+	boolean replaceSnapshotAndPose(RespawnNpc npc) {
+		var sql = """
+				UPDATE respawn_npcs SET
+				  type_id = ?, variant = ?, type_name = ?,
+				  pos_x = ?, pos_y = ?, pos_z = ?, yaw = ?,
+				  name = ?, health = ?, hunger = ?, thirst = ?, taming = ?, age = ?,
+				  behaviour = ?, behaviour_overridden = ?, attack_reaction = ?, attack_reaction_overridden = ?,
+				  group_id = ?, locked = ?, npc_static = ?, invincible = ?, invisible = ?,
+				  interactable = ?, collider_enabled = ?,
+				  footstep_sound = ?, idle_sound = ?, alert_sound = ?,
+				  eq_type_id = ?, eq_variant = ?, eq_status = ?, eq_value = ?, eq_durability = ?, eq_modifier = ?,
+				  clothes = ?,
+				  skin_gender = ?, skin_variation = ?, skin_color = ?, eye_color = ?, hair_color = ?,
+				  hairstyle = ?, beard = ?,
+				  sec_type_id = ?, sec_variant = ?, sec_status = ?, sec_value = ?, sec_durability = ?, sec_modifier = ?,
+				  pregnant = ?
+				WHERE respawn_id = ?
+				""";
+		try (var prep = database.getConnection().prepareStatement(sql)) {
+			int i = 1;
+			prep.setInt(i++, npc.typeId());
+			prep.setInt(i++, npc.variant());
+			prep.setString(i++, npc.typeName());
+			prep.setFloat(i++, npc.posX());
+			prep.setFloat(i++, npc.posY());
+			prep.setFloat(i++, npc.posZ());
+			prep.setFloat(i++, npc.yaw());
+			i = bindSnapshotBody(prep, i, npc);
+			prep.setLong(i, npc.respawnId());
+			return prep.executeUpdate() > 0;
 		} catch (SQLException e) {
 			e.printStackTrace();
 			return false;
@@ -240,8 +272,7 @@ public final class RespawnRepository {
 			prep.setFloat(3, posZ);
 			prep.setFloat(4, yaw);
 			prep.setLong(5, respawnId);
-			prep.executeUpdate();
-			return true;
+			return prep.executeUpdate() > 0;
 		} catch (SQLException e) {
 			e.printStackTrace();
 			return false;
@@ -252,55 +283,77 @@ public final class RespawnRepository {
 	 * Set or clear pending respawn due time.
 	 *
 	 * @param nextRespawn epoch ms when due, or null for idle (no timer pending)
+	 * @return false on SQL failure or if no row was updated
 	 */
-	void setNextRespawn(long respawnId, Long nextRespawn) {
+	boolean setNextRespawn(long respawnId, Long nextRespawn) {
 		var sql = "UPDATE respawn_npcs SET next_respawn = ? WHERE respawn_id = ?";
 		try (var prep = database.getConnection().prepareStatement(sql)) {
 			setNullableLong(prep, 1, nextRespawn);
 			prep.setLong(2, respawnId);
-			prep.executeUpdate();
+			return prep.executeUpdate() > 0;
 		} catch (SQLException e) {
 			e.printStackTrace();
+			return false;
 		}
 	}
 
 	/** Persist death-to-respawn delay in seconds. */
-	void setIntervalSeconds(long respawnId, int intervalSeconds) {
+	boolean setIntervalSeconds(long respawnId, int intervalSeconds) {
 		var sql = "UPDATE respawn_npcs SET interval_seconds = ? WHERE respawn_id = ?";
 		try (var prep = database.getConnection().prepareStatement(sql)) {
 			prep.setInt(1, intervalSeconds);
 			prep.setLong(2, respawnId);
-			prep.executeUpdate();
+			return prep.executeUpdate() > 0;
 		} catch (SQLException e) {
 			e.printStackTrace();
+			return false;
 		}
 	}
 
-	/** Rebind after spawn: store the new body's global id. */
-	void setCurrentNpcId(long respawnId, long npcId) {
-		var sql = "UPDATE respawn_npcs SET current_npc_id = ? WHERE respawn_id = ?";
+	/**
+	 * After a successful spawn: bind the new body and clear pending due time in one statement.
+	 *
+	 * @return false on SQL failure or if no row was updated
+	 */
+	boolean completeRespawn(long respawnId, long npcId) {
+		var sql = """
+				UPDATE respawn_npcs
+				SET current_npc_id = ?, next_respawn = NULL
+				WHERE respawn_id = ?
+				""";
 		try (var prep = database.getConnection().prepareStatement(sql)) {
 			prep.setLong(1, npcId);
 			prep.setLong(2, respawnId);
-			prep.executeUpdate();
+			return prep.executeUpdate() > 0;
 		} catch (SQLException e) {
 			e.printStackTrace();
+			return false;
 		}
 	}
 
-	/** Delete respawn row; {@code guard_posts} cascade via FK. */
-	void delete(long respawnId) {
+	/**
+	 * Delete respawn row; {@code guard_posts} cascade via FK.
+	 *
+	 * @return false on SQL failure (0 rows still counts as success: already gone)
+	 */
+	boolean delete(long respawnId) {
 		var sql = "DELETE FROM respawn_npcs WHERE respawn_id = ?";
 		try (var prep = database.getConnection().prepareStatement(sql)) {
 			prep.setLong(1, respawnId);
 			prep.executeUpdate();
+			return true;
 		} catch (SQLException e) {
 			e.printStackTrace();
+			return false;
 		}
 	}
 
-	/** All guard posts for enable-time RAM load. */
-	public List<GuardPost> findAllGuardPosts() {
+	/**
+	 * All guard posts for enable-time RAM load.
+	 *
+	 * @return empty if SQL failed (already logged); present list may be empty
+	 */
+	public Optional<List<GuardPost>> findAllGuardPosts() {
 		var list = new ArrayList<GuardPost>();
 		var sql = """
 				SELECT respawn_id, pos_x, pos_y, pos_z, yaw
@@ -311,10 +364,11 @@ public final class RespawnRepository {
 			while (result.next()) {
 				list.add(readGuardPost(result));
 			}
+			return Optional.of(list);
 		} catch (SQLException e) {
 			e.printStackTrace();
+			return Optional.empty();
 		}
-		return list;
 	}
 
 	/**
@@ -560,5 +614,23 @@ public final class RespawnRepository {
 	private static Float getNullableFloat(ResultSet result, String column) throws SQLException {
 		float value = result.getFloat(column);
 		return result.wasNull() ? null : value;
+	}
+
+	/**
+	 * Single-row load. {@code ok} is false if SQL failed (already logged).
+	 * When ok, empty {@code row} means the id does not exist.
+	 */
+	public record FindResult(boolean ok, Optional<RespawnNpc> row) {
+		static FindResult fail() {
+			return new FindResult(false, Optional.empty());
+		}
+
+		static FindResult miss() {
+			return new FindResult(true, Optional.empty());
+		}
+
+		static FindResult hit(RespawnNpc npc) {
+			return new FindResult(true, Optional.of(npc));
+		}
 	}
 }

@@ -5,7 +5,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import de.mahagst.risingworld.respawnnpc.RespawnService.UpdateMode;
-import de.mahagst.risingworld.respawnnpc.guard.GuardFeature;
+import de.mahagst.risingworld.respawnnpc.guard.GuardService;
 import net.risingworld.api.Plugin;
 import net.risingworld.api.World;
 import net.risingworld.api.database.Database;
@@ -18,7 +18,7 @@ import net.risingworld.api.utils.Vector3f;
 
 /**
  * Plugin entry: lifecycle, admin gate, all chat commands, LoS/#id focus helpers.
- * Domain logic: {@link RespawnService}. Guard walk/arrive: {@link GuardFeature}.
+ * Domain logic: {@link RespawnService}. Guard walk/arrive: {@link GuardService}.
  */
 public class RespawnNpcPlugin extends Plugin implements Listener {
 	/** Max LoS / nearest-NPC focus distance in world units. */
@@ -27,12 +27,12 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 			"76561198002368372");
 
 	private Database database;
-	private RespawnRepository repository;
 	private RespawnService respawn;
-	private GuardFeature guard;
+	private GuardService guard;
 
 	/**
-	 * Open world DB, create schema, wire respawn + guard, register command listener.
+	 * Open world DB, create schema, wire respawn + guard.
+	 * Load both RAM stores, then start respawns/timers and guard walks.
 	 */
 	@Override
 	public void onEnable() {
@@ -42,20 +42,28 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 			System.out.println("[RespawnNpc] Failed to open SQLite database: " + dbFile);
 			return;
 		}
-		repository = new RespawnRepository(database);
+		RespawnRepository repository = new RespawnRepository(database);
 		repository.createSchema();
 		respawn = new RespawnService(this, repository);
-		guard = new GuardFeature(this, repository, respawn::livingNpcForRespawn);
+		guard = new GuardService(this, repository, respawn::livingNpcForRespawn);
 		respawn.setGuardHooks(guard::onBodyReplaced, guard::onRespawnRemoved);
 		respawn.setGuardStatus(guard::statusOf);
 		respawn.setGuardPostPos(guard::postPosOf);
-		respawn.enable();
-		guard.enable();
+		if (!respawn.loadMaps()) {
+			System.out.println("[RespawnNpc] Failed to load respawn rows; plugin not started");
+			return;
+		}
+		if (!guard.loadPosts()) {
+			System.out.println("[RespawnNpc] Failed to load guard posts; plugin not started");
+			return;
+		}
+		respawn.start();
+		guard.startWalks();
 		registerEventListener(this);
 		System.out.println("[RespawnNpc] enabled (" + dbFile + ")");
 	}
 
-	/** Tear down guard, cancel respawn timers, checkpoint and close SQLite. */
+	/** Tear down guard, cancel respawn timers, close SQLite. */
 	@Override
 	public void onDisable() {
 		if (guard != null) {
@@ -65,7 +73,6 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 			respawn.disable();
 		}
 		if (database != null) {
-			database.execute("PRAGMA wal_checkpoint(TRUNCATE)");
 			database.close();
 		}
 		System.out.println("[RespawnNpc] disabled");
@@ -156,20 +163,19 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 			return;
 		}
 		if (request.respawnId() != null) {
-			Optional<RespawnNpc> savedOpt = respawn.find(request.respawnId());
+			Optional<RespawnNpc> savedOpt = respawn.require(player, request.respawnId());
 			if (savedOpt.isEmpty()) {
-				player.sendTextMessage("Respawn #" + request.respawnId() + " not found.");
 				return;
 			}
 			respawn.applyUpdate(player, savedOpt.get(), null, request.mode(), request.timerMinutes());
 			return;
 		}
 		withFocused(player, (p, npc) -> {
-			RespawnNpc saved = requireRegistered(p, npc);
-			if (saved == null) {
+			Optional<RespawnNpc> saved = respawn.requireByNpc(p, npc);
+			if (saved.isEmpty()) {
 				return;
 			}
-			respawn.applyUpdate(p, saved, npc, request.mode(), request.timerMinutes());
+			respawn.applyUpdate(p, saved.get(), npc, request.mode(), request.timerMinutes());
 		});
 	}
 
@@ -258,20 +264,19 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 				player.sendTextMessage("Usage: " + usage);
 				return;
 			}
-			Optional<RespawnNpc> savedOpt = respawn.find(respawnId);
+			Optional<RespawnNpc> savedOpt = respawn.require(player, respawnId);
 			if (savedOpt.isEmpty()) {
-				player.sendTextMessage("Respawn #" + respawnId + " not found.");
 				return;
 			}
 			handler.handle(player, savedOpt.get());
 			return;
 		}
 		withFocused(player, (p, npc) -> {
-			RespawnNpc saved = requireRegistered(p, npc);
-			if (saved == null) {
+			Optional<RespawnNpc> saved = respawn.requireByNpc(p, npc);
+			if (saved.isEmpty()) {
 				return;
 			}
-			handler.handle(p, saved);
+			handler.handle(p, saved.get());
 		});
 	}
 
@@ -287,15 +292,6 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 		} catch (NumberFormatException e) {
 			return null;
 		}
-	}
-
-	private RespawnNpc requireRegistered(Player player, Npc npc) {
-		Optional<RespawnNpc> saved = respawn.findByNpcId(npc.getGlobalID());
-		if (saved.isEmpty()) {
-			player.sendTextMessage("NPC is not registered.");
-			return null;
-		}
-		return saved.get();
 	}
 
 	/**
@@ -328,7 +324,7 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 		float maxSq = maxDistance * maxDistance;
 		Npc best = null;
 		float bestSq = maxSq;
-		for (Npc candidate : World.getAllNpcs()) {
+		for (Npc candidate : World.getAllNpcsInRange(pos, maxDistance)) {
 			if (candidate == null || candidate.isDead() || candidate.isTransient()) {
 				continue;
 			}

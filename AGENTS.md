@@ -10,14 +10,15 @@ Javadoc: local under `RisingWorld/Data/SDK`, online at <https://javadoc.rising-w
 
 ```text
 RespawnNpcPlugin   -- entry (plugin.yml main): lifecycle, admin, all commands, LoS/#id focus
-RespawnService     -- respawn domain: npc map, timers, death -> schedule, spawn/apply
-guard/             -- GuardFeature + GuardService + GuardPost (runtime only; no Listener)
+RespawnService     -- respawn domain: RespawnState, timers, death -> schedule, spawn/apply
+guard/             -- GuardService + GuardPost (runtime only; no Listener)
 RespawnRepository  -- SQLite: respawn_npcs + guard_posts
 NpcSnapshot        -- capture / apply settable fields
-SqliteSchema       -- ensureColumn for schema evolution
+Pose               -- lookYaw / faceYaw (shared; respawn must not import guard)
+SqliteSchema       -- ensureColumn for schema evolution (call when adding columns)
 ```
 
-Wiring on enable: open `<World.getName()>.db` -> createSchema -> `RespawnService` + `GuardFeature` -> `setGuardHooks(onBodyReplaced, onRespawnRemoved)` -> enable both -> register plugin command listener.
+Wiring on enable: open `<World.getName()>.db` -> createSchema -> `RespawnService` + `GuardService` -> `setGuardHooks` -> `respawn.loadMaps()` -> `guard.loadPosts()` -> `respawn.start()` -> `guard.startWalks()` -> register plugin command listener.
 
 No second plugin, no `AdminAccess` class, no separate guard.db.
 
@@ -33,16 +34,17 @@ No second plugin, no `AdminAccess` class, no separate guard.db.
 7. One-shot timer (if none pending)
 8. Timer -> spawnNpc at spawn pose -> apply snapshot -> rebind npc id
 9. If guard post exists: settle 2s, then `moveTo` post
-10. At post (`dist <= 0.1`): turn + lock. Watch removed (status "at post").
+10. At post (`xz dist <= 0.1`): turn + lock. Watch removed. Status checks live position if no watch.
 ```
 
-Global guard tick every 2s only while walking (arrive poll). Death never overwrites the snapshot. Players install nothing.
+Global guard tick every 2s only while at least one watch exists (arrive poll). Death never overwrites the snapshot. Players install nothing.
 
 ## Commands
 
 Admins only: `player.isAdmin()` (`Server_Admins`). Otherwise ignore silently (no reply, do not cancel).
 
 Admin commands reply only to the executing admin. Auto-respawn is silent.
+Command DB/spawn failures: formatted chat to that admin. Runtime failures (death, timer, spawn): `System.out.println` only.
 
 No name clash with RespawnChest (`/make-refill`, `/refill-*`).
 
@@ -51,7 +53,7 @@ No name clash with RespawnChest (`/make-refill`, `/refill-*`).
 | `/make-respawn <minutes>`         | Register focused NPC; snapshot from NPC, spawn pose = your pose. Already registered: error. |
 | `/respawn-update`                 | Snapshot only. Optional token: `snapshot`.                                                  |
 | `/respawn-update pose`            | Spawn pose only (your position/rotation). Does **not** touch guard.                         |
-| `/respawn-update all`             | Snapshot + spawn pose.                                                                      |
+| `/respawn-update all`             | Snapshot + spawn pose (one SQL write).                                                      |
 | `/respawn-update timer <minutes>` | Interval only (pending timer not restarted).                                                |
 | `/respawn-update #id ...`         | Same modes by respawn id (requires `#`).                                                    |
 | `/respawn-now [#id]`              | Spawn replacement now. If live body exists, `delete()` after successful spawn (no corpse).  |
@@ -61,11 +63,11 @@ No name clash with RespawnChest (`/make-refill`, `/refill-*`).
 | `/make-guard <id>`                | Guard post = your xyz + rotation. Living NPC walks there; on arrive facing+lock.            |
 | `/guard-remove <id>`              | Clear guard post. NPC not moved.                                                            |
 
-Focus: LoS 10f, else nearest non-transient within 10. Optional `#id` or bare `id` for `now` / `remove` / `info` / guard. `/respawn-update` id form is `#id` only. `/make-respawn` always needs focus. `/respawn-list` lists all.
+Focus: LoS 10f, else nearest non-transient within 10 (`World.getAllNpcsInRange`). Optional `#id` or bare `id` for `now` / `remove` / `info` / guard. `/respawn-update` id form is `#id` only. `/make-respawn` always needs focus. `/respawn-list` lists all.
 
 Reject: transient; no focus (except list / id forms); `/make-respawn` without minutes or already registered; bad `/respawn-update` tokens; snapshot/`all` when body missing/dead; guard without living body.
 
-Interval: `0` or less -> `MIN_TEST_SECONDS`. Else `minutes * 60`, cap **86400**. Stored as `interval_seconds`.
+Interval: `0` or less -> `MIN_TEST_SECONDS`. Else cap minutes at `MAX_INTERVAL_SECONDS / 60`, then `* 60` (cap **86400**). Stored as `interval_seconds`.
 
 **Not in scope yet:** loot tables, admin UI, always-on periodic respawn, corpse cleanup, guard fight/return/leash.
 
@@ -76,24 +78,28 @@ Interval: `0` or less -> `MIN_TEST_SECONDS`. Else `minutes * 60`, cap **86400**.
 - Apply only fields with setters. Secondary item + pregnant: capture-only.
 - Clothes serialize/deserialize; skin null-safe for animals; equipped with Modifier.
 - Behaviour / attack reaction: `set*` if overridden flag saved, else `reset*`.
-- `/respawn-now`: ignore death from that `delete()` via `ignoringDeathNpcIds`.
+- `/respawn-now`: unbind old npc id from RAM **before** `delete()`, so the death event is ignored.
 - Commands: single `PlayerCommandEvent` on the plugin; `setCancelled(true)` when handled.
-- Guard core: spawn/make/enable -> `moveTo` post -> arrive (`dist^2 <= 0.1^2`) -> step-turn -> lock. Watch only while walking (incl. turn). After lock: `stopWatch`, list shows "at post". Global 0.5 Hz tick is arrive poll only. No combat, no player gate, no `forceReplace` from guard. Startup: at post -> lock; off-post -> walk; missing body skipped.
+- Guard core: spawn/make/startWalks -> `moveTo` post -> arrive (`dist^2 <= 0.1^2` xz) -> repeating step-turn on one Watch -> lock only if still at post. Watch only while walking (incl. turn). After lock: `stopWatch`. Status: walking / at post / away. Global 0.5 Hz tick only while watches exist. No combat, no player gate. Startup: at post -> lock; off-post -> walk; missing body skipped; existing settle watch from spawn is not overwritten.
+- Enqueued timer work is bound to a generation (respawn) or Watch identity (guard). Cancel invalidates leftover enqueue.
 
 ```text
 NpcDeathEvent (RespawnService)
-  -> ignore-set / map miss / already pending: return
-  -> next_respawn = now + interval, one-shot Timer
-  -> timer: spawn + apply + rebind + guard onBodyReplaced (delayed walk if post in RAM)
+  -> map miss / already pending: return
+  -> next_respawn = now + interval (abort if DB write fails)
+  -> one-shot Timer (generation)
+  -> timer: spawn + apply + completeRespawn + rebind + guard onBodyReplaced (delayed walk if post in RAM)
 ```
 
-At most one pending `Timer` per `respawn_id`. Startup: one `findAll()` fills RAM maps, then resume pending death timers (overdue spawn, else remaining delay). Do not spawn missing idle bodies (`getNpc == null` may mean unloaded chunk).
+At most one pending `Timer` per `respawn_id`. Startup: `loadMaps` one `findAll()` into RAM (fail = do not start). Then after guard posts are loaded, `start` resumes pending death timers (overdue spawn, else remaining delay). Do not spawn missing idle bodies (`getNpc == null` may mean unloaded chunk).
 
 ## Persistence: SQLite
 
-One file per world: `getPath() + "/" + World.getName() + ".db"` (path-unsafe chars in the name become `_`). `PRAGMA foreign_keys = ON`, `journal_mode=DELETE`. Checkpoint on disable.
+One file per world: `getPath() + "/" + World.getName() + ".db"` (path-unsafe chars in the name become `_`). `PRAGMA foreign_keys = ON`, `journal_mode=DELETE`. Close on disable (no WAL checkpoint).
 
-RAM maps: `current_npc_id -> respawn_id`, `respawn_id -> current_npc_id`, `respawn_id -> interval_seconds`. Death filter and `livingNpcForRespawn` use RAM (no full-row DB). Guard posts: RAM map in `GuardService` (hot path); DB only on enable load / make / remove. Guard watches (`respawn_id -> npcId`) only while walking.
+RAM: `npcIdToRespawnId` plus `byRespawnId` (`RespawnState`: npc id, interval, timer, generation). Death filter and `livingNpcForRespawn` use RAM (no full-row DB). Guard posts: RAM map in `GuardService` (hot path); DB only on enable load / make / remove. Guard watches (`respawn_id -> Watch`) only while walking.
+
+Writes return false on SQL failure; RAM and success chat update only after a successful write. `completeRespawn` sets `current_npc_id` and clears `next_respawn` in one statement. `/respawn-update all` is one snapshot+pose UPDATE. `findAll` / `findAllGuardPosts` distinguish query failure from an empty table.
 
 ```text
 respawn_npcs:

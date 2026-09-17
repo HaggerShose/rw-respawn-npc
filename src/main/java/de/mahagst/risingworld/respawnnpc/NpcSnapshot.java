@@ -35,9 +35,8 @@ final class NpcSnapshot {
 			int intervalSeconds,
 			Long nextRespawn,
 			long createdAt) {
-		Vector3f pos = spawnPos != null ? spawnPos : npc.getPosition();
-		if (pos == null) {
-			pos = new Vector3f(0f, 0f, 0f);
+		if (spawnPos == null) {
+			throw new IllegalArgumentException("spawnPos is required");
 		}
 		Npcs.NpcDefinition def = npc.getDefinition();
 		String typeName = Short.toString(npc.getTypeID());
@@ -79,9 +78,9 @@ final class NpcSnapshot {
 				npc.getTypeID(),
 				npc.getVariant(),
 				typeName,
-				pos.x,
-				pos.y,
-				pos.z,
+				spawnPos.x,
+				spawnPos.y,
+				spawnPos.z,
 				yaw,
 				intervalSeconds,
 				nextRespawn,
