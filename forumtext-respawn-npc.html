@@ -1,0 +1,149 @@
+<p><span style="color:#696969;">Hello again,</span></p>
+<p><span style="color:#696969;">from the maker of <a href="https://forum.rising-world.net/thread/15541-respawn-chest/">Respawn Chest</a> and <a href="https://forum.rising-world.net/thread/15546-repair-chest/">Repair Chest</a> comes another plugin for one of those quiet admin chores that never quite go away.</span></p>
+<p><span style="color:#696969;">You place a nice NPC at spawn. Someone kills it. You place it again. Repeat until you question your life choices.</span></p>
+<p><span style="color:#696969;"><br></span></p>
+<p><span style="color:#696969;"><strong>Respawn NPC</strong> takes care of exactly that.</span></p>
+<p><span style="color:#696969;">Register an NPC once: the plugin stores a snapshot of its looks and gear, plus the spawn pose from where <em>you</em> stood when registering. After it dies, a timer starts. When the timer expires, a new copy is spawned at that saved pose -- not at the corpse, not at death location.</span></p>
+<p><span style="color:#696969;"><br></span></p>
+<p><span style="color:#696969;">Optional: set a <strong>guard post</strong>. Shortly after spawn the NPC walks there, faces the saved direction, and locks. If it wanders off later, it is sent back. If it enters combat, the walk waits until the fight is over.</span></p>
+<p><span style="color:#696969;"><br></span></p>
+<p><span style="color:#696969;">Players do not need to install anything. Respawn itself is silent -- no chat spam.</span></p>
+<p><span style="color:#696969;">The plugin stays out of the way when nothing is pending: timers and guard checks only run while there is work to do.</span></p>
+<woltlab-spoiler data-label="Deutsch">
+	<p><span style="color:#696969;">Hallo nochmal,</span></p>
+	<p><span style="color:#696969;">vom Entwickler von <a href="https://forum.rising-world.net/thread/15541-respawn-chest/">Respawn Chest</a> und <a href="https://forum.rising-world.net/thread/15546-repair-chest/">Repair Chest</a> kommt ein weiteres Plugin für eine dieser ruhigen Admin-Aufgaben, die nie ganz verschwinden.</span></p>
+	<p><span style="color:#696969;">Man stellt einen hübschen NPC an den Spawn. Jemand tötet ihn. Man stellt ihn wieder hin. Repeat, bis man seine Lebensentscheidungen hinterfragt.</span></p>
+	<p><span style="color:#696969;"><br></span></p>
+	<p><span style="color:#696969;"><strong>Respawn NPC</strong> nimmt euch genau diesen Unsinn ab.</span></p>
+	<p><span style="color:#696969;">NPC einmal registrieren: Das Plugin speichert einen Snapshot von Aussehen und Ausrüstung sowie die Spawn-Pose von dem Ort, an dem <em>ihr</em> beim Registrieren gestanden habt. Nach dem Tod startet ein Timer. Nach Ablauf spawnt eine neue Kopie an dieser gespeicherten Pose -- nicht am Leichnam, nicht am Todesort.</span></p>
+	<p><span style="color:#696969;"><br></span></p>
+	<p><span style="color:#696969;">Optional: einen <strong>Wachposten</strong> setzen. Kurz nach dem Spawn läuft der NPC dorthin, dreht sich in die gespeicherte Blickrichtung und locked. Wandert er später ab, wird er zurückgeschickt. Kommt er in den Kampf, wartet der Lauf, bis der Kampf vorbei ist.</span></p>
+	<p><span style="color:#696969;"><br></span></p>
+	<p><span style="color:#696969;">Spieler müssen nichts installieren. Der Respawn selbst ist still -- kein Chat-Spam.</span></p>
+	<p><span style="color:#696969;">Das Plugin hält sich zurück, wenn nichts ansteht: Timer und Guard-Checks laufen nur, solange es etwas zu tun gibt.</span></p>
+</woltlab-spoiler>
+<p></p>
+<p><span style="color:#696969;"><strong>How it works</strong></span></p>
+<ul>
+	<li><span style="color:#696969;">Stand at the desired respawn spot and face the direction you want</span></li>
+	<li><span style="color:#696969;">Look at an NPC, or stand close if it is roaming (within 10 blocks)</span></li>
+	<li><span style="color:#696969;">Use [tt]/make-respawn &lt;minutes&gt;[/tt] in chat</span></li>
+	<li><span style="color:#696969;">That NPC dies</span></li>
+	<li><span style="color:#696969;">A one-shot timer starts</span></li>
+	<li><span style="color:#696969;">The world keeps turning</span></li>
+	<li><span style="color:#696969;">When the timer expires, a new NPC is spawned at the saved pose and the snapshot is applied</span></li>
+	<li><span style="color:#696969;">Optional: if a guard post is set, the NPC walks there shortly after spawn and locks facing on arrival</span>
+	<p><br></p></li>
+</ul>
+<p></p>
+<p><span style="color:#696969;">The snapshot is taken at register / update time, never on death.</span></p>
+<p><span style="color:#696969;">While a timer is already running, further deaths do not restart or extend it.</span></p>
+<p><span style="color:#696969;">This is not a perfect clone: every readable field is stored, but only fields with setters are restored. Secondary hand item and pregnancy are saved for later API versions and ignored on spawn.</span></p>
+<woltlab-spoiler data-label="Deutsch">
+	<p><span style="color:#696969;"><strong>So funktioniert es</strong></span></p>
+	<ul>
+		<li><span style="color:#696969;">Am gewünschten Respawn-Ort stehen und in die gewünschte Richtung schauen</span></li>
+		<li><span style="color:#696969;">NPC anschauen, oder nah ranstellen wenn er umherläuft (innerhalb von 10 Blöcken)</span></li>
+		<li><span style="color:#696969;">[tt]/make-respawn &lt;minutes&gt;[/tt] im Chat eingeben</span></li>
+		<li><span style="color:#696969;">Der NPC stirbt</span></li>
+		<li><span style="color:#696969;">Ein einmaliger Timer startet</span></li>
+		<li><span style="color:#696969;">Die Welt dreht sich weiter</span></li>
+		<li><span style="color:#696969;">Nach Ablauf spawnt ein neuer NPC an der gespeicherten Pose und der Snapshot wird angewendet</span></li>
+		<li><span style="color:#696969;">Optional: Ist ein Wachposten gesetzt, läuft der NPC kurz nach dem Spawn dorthin und locked die Blickrichtung bei Ankunft</span>
+		<p><br></p></li>
+	</ul>
+	<p><span style="color:#696969;">Der Snapshot wird beim Registrieren / Updaten genommen, nie beim Tod.</span></p>
+	<p><span style="color:#696969;">Läuft bereits ein Timer, wird er durch weitere Tode weder neu gestartet noch verlängert.</span></p>
+	<p><span style="color:#696969;">Das ist kein perfekter Klon: Jedes lesbare Feld wird gespeichert, aber nur Felder mit Settern werden wiederhergestellt. Item in der Nebenhand und Schwangerschaft werden für spätere API-Versionen mitgespeichert und beim Spawn ignoriert.</span></p>
+</woltlab-spoiler>
+<p></p>
+<p><span style="color:#696969;"><strong>Commands</strong></span></p>
+<p><span style="color:#696969;">Only server admins listed in <em>Server_Admins</em> in <em>server.properties</em> can use these commands.</span></p>
+<p><span style="color:#696969;">Target the NPC first (look at it, or stand nearby), except for [tt]/respawn-list[/tt] and the optional [tt]#id[/tt] forms.</span></p>
+<ul>
+	<li><span style="color:#696969;"><strong>/make-respawn <em>&lt;minutes&gt;</em></strong> - registers the target NPC. Snapshot = NPC state; your pose = spawn. Already registered: error (use /respawn-update)</span></li>
+	<li><span style="color:#696969;"><strong>/respawn-update</strong> - refreshes the NPC snapshot only (spawn pose stays)</span></li>
+	<li><span style="color:#696969;"><strong>/respawn-update pose</strong> - updates spawn pose only (your position/rotation)</span></li>
+	<li><span style="color:#696969;"><strong>/respawn-update all</strong> - snapshot + spawn pose</span></li>
+	<li><span style="color:#696969;"><strong>/respawn-update timer <em>&lt;minutes&gt;</em></strong> - interval only</span></li>
+	<li><span style="color:#696969;"><strong>/respawn-update #2 ...</strong> - same modes, target by respawn id (no line of sight needed)</span></li>
+	<li><span style="color:#696969;"><strong>/respawn-now [#id]</strong> - spawn immediately; if the old body is still alive, it is deleted after a successful spawn</span></li>
+	<li><span style="color:#696969;"><strong>/respawn-remove [#id]</strong> - unregisters; the living NPC stays</span></li>
+	<li><span style="color:#696969;"><strong>/respawn-info [#id]</strong> - interval, pending state, remaining time, spawn/current position</span></li>
+	<li><span style="color:#696969;"><strong>/respawn-list</strong> - list all registered NPCs</span></li>
+	<li><span style="color:#696969;"><strong>/respawn-list timer</strong> - list active guard checks</span></li>
+	<li><span style="color:#696969;"><strong>/make-guard <em>&lt;id&gt;</em></strong> - guard post = your position (+ rotation); NPC walks there after spawn</span></li>
+	<li><span style="color:#696969;"><strong>/guard-remove <em>&lt;id&gt;</em></strong> - clear guard post; NPC stays put</span>
+	<p><br></p></li>
+</ul>
+<p></p>
+<p><span style="color:#696969;">A value of <strong>0 minutes</strong> uses a short test delay.</span></p>
+<p><span style="color:#696969;">Maximum respawn time: <strong>24 hours</strong>.</span></p>
+<p><span style="color:#696969;">Transient NPCs cannot be registered.</span></p>
+<p><span style="color:#696969;">Guard post is independent of spawn pose: [tt]/respawn-update pose[/tt] does not change it.</span></p>
+<p><span style="color:#696969;"><strong>Tip:</strong> For stationary guards, set the NPC to defensive/aggressive (and use a guard post). Roaming AI otherwise keeps them wandering until they arrive and lock.</span></p>
+<woltlab-spoiler data-label="Deutsch">
+	<p><span style="color:#696969;"><strong>Befehle</strong></span></p>
+	<p><span style="color:#696969;">Nur Server-Admins aus <em>Server_Admins</em> in <em>server.properties</em> können diese Befehle verwenden.</span></p>
+	<p><span style="color:#696969;">NPC zuerst anvisieren (anschauen oder nah ranstellen), außer bei [tt]/respawn-list[/tt] und den optionalen [tt]#id[/tt]-Formen.</span></p>
+	<ul>
+		<li><span style="color:#696969;"><strong>/make-respawn <em>&lt;minutes&gt;</em></strong> - registriert den anvisierten NPC. Snapshot = NPC-Zustand; eure Pose = Spawn. Bereits registriert: Fehler (dann /respawn-update)</span></li>
+		<li><span style="color:#696969;"><strong>/respawn-update</strong> - aktualisiert nur den Snapshot (Spawn-Pose bleibt)</span></li>
+		<li><span style="color:#696969;"><strong>/respawn-update pose</strong> - aktualisiert nur die Spawn-Pose (eure Position/Rotation)</span></li>
+		<li><span style="color:#696969;"><strong>/respawn-update all</strong> - Snapshot + Spawn-Pose</span></li>
+		<li><span style="color:#696969;"><strong>/respawn-update timer <em>&lt;minutes&gt;</em></strong> - nur Intervall</span></li>
+		<li><span style="color:#696969;"><strong>/respawn-update #2 ...</strong> - dieselben Modi, Ziel über Respawn-ID (keine Sichtlinie nötig)</span></li>
+		<li><span style="color:#696969;"><strong>/respawn-now [#id]</strong> - sofort spawnen; lebt der alte Körper noch, wird er nach erfolgreichem Spawn gelöscht</span></li>
+		<li><span style="color:#696969;"><strong>/respawn-remove [#id]</strong> - deregistriert; der lebende NPC bleibt</span></li>
+		<li><span style="color:#696969;"><strong>/respawn-info [#id]</strong> - Intervall, Pending-Status, Restzeit, Spawn-/aktuelle Position</span></li>
+		<li><span style="color:#696969;"><strong>/respawn-list</strong> - listet alle registrierten NPCs</span></li>
+		<li><span style="color:#696969;"><strong>/respawn-list timer</strong> - listet aktive Guard-Checks</span></li>
+		<li><span style="color:#696969;"><strong>/make-guard <em>&lt;id&gt;</em></strong> - Wachposten = eure Position (+ Rotation); NPC läuft nach dem Spawn dorthin</span></li>
+		<li><span style="color:#696969;"><strong>/guard-remove <em>&lt;id&gt;</em></strong> - Wachposten entfernen; NPC bleibt stehen</span>
+		<p><br></p></li>
+	</ul>
+	<p><span style="color:#696969;"><strong>0 Minuten</strong> entsprechen einem kurzen Test-Delay.</span></p>
+	<p><span style="color:#696969;">Maximale Respawn-Zeit: <strong>24 Stunden</strong>.</span></p>
+	<p><span style="color:#696969;">Transient NPCs können nicht registriert werden.</span></p>
+	<p><span style="color:#696969;">Der Wachposten ist unabhängig von der Spawn-Pose: [tt]/respawn-update pose[/tt] ändert ihn nicht.</span></p>
+	<p><span style="color:#696969;"><strong>Tipp:</strong> Für stehende Wächter den NPC auf defensive/aggressive stellen (und einen Wachposten setzen). Sonst wandert die normale KI weiter, bis sie ankommt und locked.</span></p>
+</woltlab-spoiler>
+<p></p>
+<p><span style="color:#696969;"><strong>Download / Installation</strong></span></p>
+<p><span style="color:#696969;">Latest release:</span></p>
+<p><span style="color:#696969;"><a href="https://github.com/HaggerShose/rw-respawn-npc/releases/latest">Respawn NPC - Latest Release</a></span></p>
+<p><span style="color:#696969;">Place the JAR here:</span></p>
+<p><span style="color:#696969;">[tt]./plugins/RespawnNpc/RespawnNpc.jar[/tt]</span></p>
+<p><span style="color:#696969;">Restart the server afterwards.</span></p>
+<p><span style="color:#696969;">State is stored per world as [tt]Plugins/RespawnNpc/&lt;WorldName&gt;.db[/tt].</span></p>
+<p><span style="color:#696969;">Built against Rising World Plugin API <strong>0.9.3</strong>.</span></p>
+<p><span style="color:#696969;">License: <strong>MIT</strong></span></p>
+<p><span style="color:#696969;">Source code:</span></p>
+<p><span style="color:#696969;"><a href="https://github.com/HaggerShose/rw-respawn-npc">GitHub - rw-respawn-npc</a></span></p>
+<p><span style="color:#696969;"><strong>Bugs / Feedback</strong></span></p>
+<p><span style="color:#696969;">If something behaves strangely, feel free to post it here.</span></p>
+<p><span style="color:#696969;">If you are reporting a problem with a registered NPC, including the output of <strong>/respawn-info</strong> (and optionally <strong>/respawn-list</strong>) can make troubleshooting easier.</span></p>
+<p><span style="color:#696969;">Have fun.</span></p>
+<p><span style="color:#696969;">The NPCs may die.</span></p>
+<p><span style="color:#696969;">They also come back.</span></p>
+<p><span style="color:#696969;">Usually.</span></p>
+<woltlab-spoiler data-label="Deutsch">
+	<p><span style="color:#696969;"><strong>Download / Installation</strong></span></p>
+	<p><span style="color:#696969;">Aktuelles Release:</span></p>
+	<p><span style="color:#696969;"><a href="https://github.com/HaggerShose/rw-respawn-npc/releases/latest">Respawn NPC - Latest Release</a></span></p>
+	<p><span style="color:#696969;">Die JAR kommt nach:</span></p>
+	<p><span style="color:#696969;">[tt]./plugins/RespawnNpc/RespawnNpc.jar[/tt]</span></p>
+	<p><span style="color:#696969;">Danach den Server neu starten.</span></p>
+	<p><span style="color:#696969;">Zustand wird pro Welt als [tt]Plugins/RespawnNpc/&lt;WorldName&gt;.db[/tt] gespeichert.</span></p>
+	<p><span style="color:#696969;">Entwickelt gegen die Rising World Plugin API <strong>0.9.3</strong>.</span></p>
+	<p><span style="color:#696969;">Lizenz: <strong>MIT</strong></span></p>
+	<p><span style="color:#696969;">Quellcode:</span></p>
+	<p><span style="color:#696969;"><a href="https://github.com/HaggerShose/rw-respawn-npc">GitHub - rw-respawn-npc</a></span></p>
+	<p><span style="color:#696969;"><strong>Bugs / Feedback</strong></span></p>
+	<p><span style="color:#696969;">Falls sich ein NPC merkwürdig verhält, gerne hier melden.</span></p>
+	<p><span style="color:#696969;">Bei Problemen mit einem registrierten NPC hilft die Ausgabe von <strong>/respawn-info</strong> (und optional <strong>/respawn-list</strong>) bei der Fehlersuche.</span></p>
+	<p><span style="color:#696969;">Viel Spaß damit.</span></p>
+	<p><span style="color:#696969;">Die NPCs dürfen sterben.</span></p>
+	<p><span style="color:#696969;">Sie kommen auch wieder.</span></p>
+	<p><span style="color:#696969;">Meistens.</span></p>
+</woltlab-spoiler>
