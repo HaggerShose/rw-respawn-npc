@@ -30,6 +30,11 @@ public final class RespawnService implements Listener {
 	static final int MAX_INTERVAL_SECONDS = 24 * 60 * 60;
 	/** Effective delay when /make-respawn gets 0 or negative minutes (quick test). */
 	static final int MIN_TEST_SECONDS = 1;
+	/**
+	 * Startup overdue and failed-spawn retry delay. Crude 30s loop;
+	 * needs more observation/tests and may get a smarter backoff later.
+	 */
+	private static final float RETRY_DELAY_SECONDS = 30f;
 
 	private final Plugin plugin;
 	private final RespawnRepository repository;
@@ -113,7 +118,8 @@ public final class RespawnService implements Listener {
 	}
 
 	/**
-	 * Resume pending death timers (overdue spawn, else remaining delay) and register the death listener.
+	 * Resume pending death timers (overdue after {@link #RETRY_DELAY_SECONDS}, else remaining delay)
+	 * and register the death listener. Does not spawn synchronously.
 	 * Call after guard posts are loaded so spawn hooks see posts.
 	 */
 	public void start() {
@@ -128,7 +134,7 @@ public final class RespawnService implements Listener {
 					continue;
 				}
 				if (next <= now) {
-					spawnReplacement(saved);
+					scheduleRetry(saved.respawnId());
 				} else {
 					schedule(saved.respawnId(), (next - now) / 1000f);
 				}
@@ -264,10 +270,12 @@ public final class RespawnService implements Listener {
 
 	/**
 	 * {@code /respawn-now}: spawn replacement immediately (deletes living body after successful spawn).
+	 * Failed spawn schedules {@link #scheduleRetry} so the RAM timer stays in place.
 	 */
 	public void now(Player player, RespawnNpc saved) {
 		if (!spawnReplacement(saved)) {
 			commandFail(player, "respawn-now", saved.respawnId(), "could not spawn replacement NPC");
+			scheduleRetry(saved.respawnId());
 			return;
 		}
 		player.sendTextMessage("NPC reset.");
@@ -439,8 +447,8 @@ public final class RespawnService implements Listener {
 	}
 
 	/**
-	 * Timer fired: consume this generation (timer gone, {@code next_respawn} kept on failure),
-	 * then load row and {@link #spawnReplacement}.
+	 * Timer fired: consume this generation, then load row and {@link #spawnReplacement}.
+	 * Failure keeps {@code next_respawn} and schedules {@link #scheduleRetry}.
 	 */
 	private void onRespawnDue(long respawnId, int generation) {
 		if (!running) {
@@ -454,19 +462,23 @@ public final class RespawnService implements Listener {
 		RespawnRepository.FindResult result = repository.find(respawnId);
 		if (!result.ok()) {
 			System.out.println("[RespawnNpc] DB read failed on respawn due #" + respawnId);
+			scheduleRetry(respawnId);
 			return;
 		}
 		if (result.row().isEmpty()) {
 			unbind(respawnId);
 			return;
 		}
-		spawnReplacement(result.row().get());
+		if (!spawnReplacement(result.row().get())) {
+			scheduleRetry(respawnId);
+		}
 	}
 
 	/**
 	 * Spawn at register-time pose, apply snapshot, delete old body if still alive,
 	 * rebind RAM maps + DB {@code current_npc_id} and clear pending, fire {@link #onBodyReplaced}.
-	 * Cancels a still-running timer only after a successful exchange; failure leaves it in place.
+	 * Cancels a still-running timer only after a successful exchange.
+	 * Caller schedules {@link #scheduleRetry} on failure so no default body is left without a timer.
 	 *
 	 * @return false if spawn, apply, or DB write failed
 	 */
@@ -519,6 +531,11 @@ public final class RespawnService implements Listener {
 		onRespawnRemoved.accept(saved.respawnId());
 		npcIdToRespawnId.remove(saved.currentNpcId());
 		return true;
+	}
+
+	/** One-shot retry after a failed or overdue spawn. See {@link #RETRY_DELAY_SECONDS}. */
+	private void scheduleRetry(long respawnId) {
+		schedule(respawnId, RETRY_DELAY_SECONDS);
 	}
 
 	/** Replace any existing timer with a one-shot that enqueues {@link #onRespawnDue}. */
@@ -575,15 +592,20 @@ public final class RespawnService implements Listener {
 
 	/** One coloured chat line: state, interval, spawn/post/now positions. */
 	private String formatEntry(RespawnNpc saved, Npc current) {
-		boolean pending = saved.nextRespawn() != null;
+		RespawnState ram = byRespawnId.get(saved.respawnId());
+		boolean hasTimer = ram != null && ram.timer != null;
+		boolean dueDb = saved.nextRespawn() != null;
 		boolean alive = current != null && !current.isDead();
 		String state;
 		String color;
-		if (pending) {
-			RespawnState ram = byRespawnId.get(saved.respawnId());
-			if (ram != null && ram.timer != null) {
-				long rest = Math.max(0, (saved.nextRespawn() - System.currentTimeMillis()) / 1000);
-				state = "pending " + rest + "s";
+		if (dueDb || hasTimer) {
+			if (hasTimer) {
+				if (!dueDb || saved.nextRespawn() <= System.currentTimeMillis()) {
+					state = "pending (retry)";
+				} else {
+					long rest = Math.max(0, (saved.nextRespawn() - System.currentTimeMillis()) / 1000);
+					state = "pending " + rest + "s";
+				}
 			} else {
 				state = "due, no timer";
 			}

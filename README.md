@@ -79,7 +79,7 @@ Plugins/RespawnNpc/<WorldName>.db
 ```
 
 Each world gets its own SQLite file (from `World.getName()`).
-On startup, stored overdue respawns (pending `next_respawn` in the past) run immediately. Idle registered NPCs that are currently missing are not spawned (the body may only be unloaded).
+On startup, stored overdue respawns (pending `next_respawn` in the past) wait ~30s, then spawn through the same timer path as a normal due. A failed spawn deletes the default body (if any) and retries every 30s (`pending (retry)`). Idle registered NPCs that are currently missing are not spawned (the body may only be unloaded).
 
 ## License
 

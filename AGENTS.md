@@ -59,10 +59,10 @@ No name clash with RespawnChest (`/make-refill`, `/refill-*`).
 | `/respawn-update all`             | Snapshot + spawn pose (one SQL write).                                                                                                                            |
 | `/respawn-update timer <minutes>` | Interval only (pending timer not restarted).                                                                                                                      |
 | `/respawn-update #id ...`         | Same modes by respawn id (requires `#`).                                                                                                                          |
-| `/respawn-now [#id]`              | Spawn replacement now. If live body exists, `delete()` after successful spawn (no corpse). Failed now does not cancel a still-running death timer.                |
+| `/respawn-now [#id]`              | Spawn replacement now. If live body exists, `delete()` after successful spawn (no corpse). Failed now schedules a 30s retry (same as overdue startup).              |
 | `/respawn-remove [#id]`           | Drop DB row + timer + guard post (FK CASCADE + RAM clear). Living NPC stays.                                                                                      |
-| `/respawn-info [#id]`             | Interval, pending / due-no-timer, spawn/current pos, type/name.                                                                                                   |
-| `/respawn-list`                   | All entries (one chat block: state, spawn/now, interval). `pending Xs` = RAM timer; `due, no timer` = DB `next_respawn` without a live timer (restart can retry). |
+| `/respawn-info [#id]`             | Interval, pending / pending-retry / due-no-timer, spawn/current pos, type/name.                                                                                   |
+| `/respawn-list`                   | All entries (one chat block: state, spawn/now, interval). `pending Xs` = RAM timer before due; `pending (retry)` = due with a live retry timer; `due, no timer` = DB `next_respawn` without a live timer. |
 | `/respawn-list timer`             | Active guard ticks (return / idle / medium / fast / combat / walk far / walk near) with interval and covered ids.                                                 |
 | `/make-guard <id>`                | Guard post = your xyz + rotation. Living NPC walks there; on arrive facing+lock.                                                                                  |
 | `/guard-remove <id>`              | Clear guard post. NPC not moved.                                                                                                                                  |
@@ -92,10 +92,10 @@ NpcDeathEvent (RespawnService)
   -> next_respawn = now + interval (abort if DB write fails)
   -> one-shot Timer (generation); onPending -> guard drops proximity + watch
   -> onRespawnDue: consume timer, then spawn + apply + completeRespawn + rebind + guard onBodyReplaced
-  -> spawn failure after consume: next_respawn stays, list shows "due, no timer"
+  -> spawn / DB-read failure: delete the default body if any, keep next_respawn, scheduleRetry 30s (list: pending (retry))
 ```
 
-At most one pending `Timer` per `respawn_id`. Startup: `loadMaps` one `findAll()` into RAM (fail = do not start). Then after guard posts are loaded, `start` resumes pending death timers (overdue spawn, else remaining delay; remaining delay also fires `onPending`). Do not spawn missing idle bodies (`getNpc == null` may mean unloaded chunk).
+At most one pending `Timer` per `respawn_id`. Startup: `loadMaps` one `findAll()` into RAM (fail = do not start). Then after guard posts are loaded, `start` resumes pending death timers (overdue -> `scheduleRetry` 30s, else remaining delay; both fire `onPending`). Never spawn overdue bodies synchronously in `start` (world may not be ready; a default NPC without snapshot can leak). Do not spawn missing idle bodies (`getNpc == null` may mean unloaded chunk).
 
 ### Guard runtime (RAM only)
 
