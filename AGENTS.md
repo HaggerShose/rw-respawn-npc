@@ -31,8 +31,8 @@ No second plugin, no `AdminAccess` class, no separate guard.db.
 4. Plugin stores respawn_id + current npc id + spawn pose from player + snapshot + interval
 5. Optional: /make-guard <id> at the watch post (xyz + rotation stored; NPC walks there once)
 6. NPC dies (NpcDeathEvent, not cancelled)
-7. One-shot timer (if none pending); guard drops this id from proximity bands
-8. Timer -> spawnNpc at spawn pose -> apply snapshot -> rebind npc id
+7. Persist next_respawn = getIngameTimestamp() + interval; one-shot Timer (if none pending); guard drops this id from proximity bands
+8. Timer -> re-check world time -> spawnNpc at spawn pose -> apply snapshot -> rebind npc id
 9. If guard post exists: settle 2s, then `moveTo` post
 10. At post (`xz dist <= 0.1`): turn + lock. Watch removed.
 11. Later: away (unlocked, not at post) -> 10s return tick -> walk again
@@ -89,13 +89,16 @@ Interval: `0` or less -> `MIN_TEST_SECONDS`. Else cap minutes at `MAX_INTERVAL_S
 ```text
 NpcDeathEvent (RespawnService)
   -> map miss / already pending: return
-  -> next_respawn = now + interval (abort if DB write fails)
+  -> next_respawn = Server.getIngameTimestamp() + interval (abort if DB write fails)
   -> one-shot Timer (generation); onPending -> guard drops proximity + watch
-  -> onRespawnDue: consume timer, then spawn + apply + completeRespawn + rebind + guard onBodyReplaced
+  -> onRespawnDue: consume timer, re-check world time (reschedule if still early / pause),
+     then spawn + apply + completeRespawn + rebind + guard onBodyReplaced
   -> spawn / DB-read failure: delete the default body if any, keep next_respawn, scheduleRetry 30s (list: pending (retry))
 ```
 
-At most one pending `Timer` per `respawn_id`. Startup: `loadMaps` one `findAll()` into RAM (fail = do not start). Then after guard posts are loaded, `start` resumes pending death timers (overdue -> `scheduleRetry` 30s, else remaining delay; both fire `onPending`). Never spawn overdue bodies synchronously in `start` (world may not be ready; a default NPC without snapshot can leak). Do not spawn missing idle bodies (`getNpc == null` may mean unloaded chunk).
+At most one pending `Timer` per `respawn_id`. Startup: `loadMaps` one `findAll()` into RAM (fail = do not start). Then after guard posts are loaded, `start` migrates legacy unix `next_respawn` to world time (preserve remaining), then resumes pending death timers (overdue -> `scheduleRetry` 30s, else remaining delay; both fire `onPending`). Never spawn overdue bodies synchronously in `start` (world may not be ready; a default NPC without snapshot can leak). Do not spawn missing idle bodies (`getNpc == null` may mean unloaded chunk).
+
+`next_respawn` is world time (`Server.getIngameTimestamp` ms), not wall clock: pause / empty idle does not advance it. Session `Timer` is only a wake-up; due is always re-checked against world time. `created_at` stays unix wall clock.
 
 ### Guard runtime (RAM only)
 
@@ -133,6 +136,8 @@ respawn_npcs:
   current_npc_id, type_id, variant, type_name,
   pos_x/y/z, yaw,                  -- spawn pose (admin; yaw degrees)
   interval_seconds, next_respawn, created_at,
+  -- next_respawn: world ms (Server.getIngameTimestamp), NULL = idle
+  -- created_at: unix wall-clock ms
   -- snapshot: name, health, hunger, thirst, taming, age,
   behaviour*, attack_reaction*, group_id,
   locked, npc_static, invincible, invisible, interactable, collider_enabled,

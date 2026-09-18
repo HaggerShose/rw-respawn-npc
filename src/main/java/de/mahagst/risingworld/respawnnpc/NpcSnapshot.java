@@ -24,8 +24,8 @@ final class NpcSnapshot {
 	 * @param yaw             horizontal facing in degrees (typically the admin's yaw)
 	 * @param respawnId       0 on insert; real id on replace-snapshot
 	 * @param intervalSeconds death delay
-	 * @param nextRespawn     pending due time or null
-	 * @param createdAt       row creation epoch ms
+ * @param nextRespawn     pending due time in world ms ({@code Server.getIngameTimestamp}) or null
+ * @param createdAt       row creation wall-clock epoch ms
 	 */
 	static RespawnNpc capture(
 			Npc npc,

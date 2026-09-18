@@ -282,7 +282,8 @@ public final class RespawnRepository {
 	/**
 	 * Set or clear pending respawn due time.
 	 *
-	 * @param nextRespawn epoch ms when due, or null for idle (no timer pending)
+	 * @param nextRespawn world-time ms when due ({@link net.risingworld.api.Server#getIngameTimestamp}),
+	 *                    or null for idle (no timer pending)
 	 * @return false on SQL failure or if no row was updated
 	 */
 	boolean setNextRespawn(long respawnId, Long nextRespawn) {

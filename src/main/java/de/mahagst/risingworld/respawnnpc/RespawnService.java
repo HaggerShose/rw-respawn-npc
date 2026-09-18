@@ -10,6 +10,7 @@ import java.util.function.LongConsumer;
 import java.util.function.LongFunction;
 
 import net.risingworld.api.Plugin;
+import net.risingworld.api.Server;
 import net.risingworld.api.Timer;
 import net.risingworld.api.World;
 import net.risingworld.api.events.EventMethod;
@@ -23,6 +24,7 @@ import net.risingworld.api.utils.Vector3f;
 /**
  * Respawn domain logic: RAM id maps, death -> one-shot timer, spawn replacement, register/update commands.
  * Snapshot is captured at register/{@code /respawn-update}, never on death.
+ * Pending due times use {@link Server#getIngameTimestamp()} (world time); pause does not advance them.
  * Guard behaviour lives in {@code GuardService}; this class only fires hooks after spawn/remove/pending.
  */
 public final class RespawnService implements Listener {
@@ -35,6 +37,11 @@ public final class RespawnService implements Listener {
 	 * needs more observation/tests and may get a smarter backoff later.
 	 */
 	private static final float RETRY_DELAY_SECONDS = 30f;
+	/**
+	 * Values at or above this are treated as legacy unix {@code next_respawn}
+	 * (pre-ingame-timestamp). ~2001-09-09 in wall-clock ms; playtime ms stay far below.
+	 */
+	private static final long LEGACY_UNIX_NEXT_RESPAWN_MIN = 1_000_000_000_000L;
 
 	private final Plugin plugin;
 	private final RespawnRepository repository;
@@ -120,11 +127,11 @@ public final class RespawnService implements Listener {
 	/**
 	 * Resume pending death timers (overdue after {@link #RETRY_DELAY_SECONDS}, else remaining delay)
 	 * and register the death listener. Does not spawn synchronously.
+	 * Converts legacy unix {@code next_respawn} values to {@link Server#getIngameTimestamp()} once.
 	 * Call after guard posts are loaded so spawn hooks see posts.
 	 */
 	public void start() {
 		running = true;
-		long now = System.currentTimeMillis();
 		List<RespawnNpc> rows = startupRows;
 		startupRows = null;
 		if (rows != null) {
@@ -133,6 +140,11 @@ public final class RespawnService implements Listener {
 				if (next == null) {
 					continue;
 				}
+				next = migrateLegacyNextRespawn(saved.respawnId(), next);
+				if (next == null) {
+					continue;
+				}
+				long now = worldNow();
 				if (next <= now) {
 					scheduleRetry(saved.respawnId());
 				} else {
@@ -317,7 +329,7 @@ public final class RespawnService implements Listener {
 
 	/**
 	 * Death hot path: unknown body / already pending -> return.
-	 * Else write {@code next_respawn}, schedule one-shot timer from RAM interval.
+	 * Else write {@code next_respawn} in world time, schedule one-shot timer from RAM interval.
 	 */
 	@EventMethod
 	public void onNpcDeath(NpcDeathEvent event) {
@@ -337,7 +349,7 @@ public final class RespawnService implements Listener {
 		if (state == null || state.timer != null) {
 			return;
 		}
-		if (!repository.setNextRespawn(respawnId, System.currentTimeMillis() + state.intervalSeconds * 1000L)) {
+		if (!repository.setNextRespawn(respawnId, worldNow() + state.intervalSeconds * 1000L)) {
 			System.out.println("[RespawnNpc] Failed to persist next_respawn for #" + respawnId);
 			return;
 		}
@@ -448,6 +460,7 @@ public final class RespawnService implements Listener {
 
 	/**
 	 * Timer fired: consume this generation, then load row and {@link #spawnReplacement}.
+	 * Re-checks world time so a session {@link Timer} that fired during pause does not spawn early.
 	 * Failure keeps {@code next_respawn} and schedules {@link #scheduleRetry}.
 	 */
 	private void onRespawnDue(long respawnId, int generation) {
@@ -469,7 +482,17 @@ public final class RespawnService implements Listener {
 			unbind(respawnId);
 			return;
 		}
-		if (!spawnReplacement(result.row().get())) {
+		RespawnNpc saved = result.row().get();
+		Long next = saved.nextRespawn();
+		if (next == null) {
+			return;
+		}
+		long now = worldNow();
+		if (next > now) {
+			schedule(respawnId, (next - now) / 1000f);
+			return;
+		}
+		if (!spawnReplacement(saved)) {
 			scheduleRetry(respawnId);
 		}
 	}
@@ -600,10 +623,10 @@ public final class RespawnService implements Listener {
 		String color;
 		if (dueDb || hasTimer) {
 			if (hasTimer) {
-				if (!dueDb || saved.nextRespawn() <= System.currentTimeMillis()) {
+				if (!dueDb || saved.nextRespawn() <= worldNow()) {
 					state = "pending (retry)";
 				} else {
-					long rest = Math.max(0, (saved.nextRespawn() - System.currentTimeMillis()) / 1000);
+					long rest = Math.max(0, (saved.nextRespawn() - worldNow()) / 1000);
 					state = "pending " + rest + "s";
 				}
 			} else {
@@ -666,6 +689,34 @@ public final class RespawnService implements Listener {
 	private static void commandFail(Player player, String operation, String detail) {
 		player.sendTextMessage("<color=#ff6666>Failed:</color> " + operation
 				+ "\n  <color=#aaaaaa>" + detail + "</color>");
+	}
+
+	/**
+	 * Accumulated active world time in ms ({@link Server#getIngameTimestamp()}).
+	 * Pause and empty-world idle do not advance this clock.
+	 */
+	private static long worldNow() {
+		return Server.getIngameTimestamp();
+	}
+
+	/**
+	 * One-shot: rewrite unix-ms {@code next_respawn} to world time, preserving remaining delay.
+	 *
+	 * @return converted due time, or {@code next} unchanged; {@code null} if the DB rewrite failed
+	 */
+	private Long migrateLegacyNextRespawn(long respawnId, long next) {
+		if (next < LEGACY_UNIX_NEXT_RESPAWN_MIN) {
+			return next;
+		}
+		long remainingMs = Math.max(0L, next - System.currentTimeMillis());
+		long converted = worldNow() + remainingMs;
+		if (!repository.setNextRespawn(respawnId, converted)) {
+			System.out.println("[RespawnNpc] Failed to migrate legacy next_respawn for #" + respawnId);
+			return null;
+		}
+		System.out.println("[RespawnNpc] Migrated legacy next_respawn for #" + respawnId
+				+ " (remaining " + (remainingMs / 1000) + "s)");
+		return converted;
 	}
 
 	/**

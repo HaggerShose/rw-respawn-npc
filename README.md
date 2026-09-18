@@ -11,7 +11,7 @@ This is not a perfect clone: every readable field is stored, but only fields wit
 1. Stand at the desired respawn spot and face the direction you want.
 2. Look at an NPC, or stand close if it is roaming (within 10 blocks).
 3. Run `/make-respawn <minutes>`.
-4. When that NPC dies, a one-shot timer starts.
+4. When that NPC dies, a one-shot timer starts (delay uses **world time**: pause / empty idle does not count).
 5. When the timer ends, a new NPC is spawned at the **saved player pose** and the snapshot is applied.
 6. Optional: if a guard post is set, the NPC walks there shortly after spawn and locks facing on arrival. If it wanders off, it is sent back. If it enters combat, the walk is paused until the fight ends.
 
@@ -53,7 +53,7 @@ Optional `snapshot` token: `/respawn-update snapshot` equals bare `/respawn-upda
 
 ### Interval
 
-- `<minutes>` is the delay after death until respawn.
+- `<minutes>` is the delay after death until respawn, measured in **world time** (paused / empty idle does not count).
 - `0` (or less) -> short test delay (see plugin constant).
 - Maximum: **24 hours** (`1440` minutes).
 
@@ -79,7 +79,7 @@ Plugins/RespawnNpc/<WorldName>.db
 ```
 
 Each world gets its own SQLite file (from `World.getName()`).
-On startup, stored overdue respawns (pending `next_respawn` in the past) wait ~30s, then spawn through the same timer path as a normal due. A failed spawn deletes the default body (if any) and retries every 30s (`pending (retry)`). Idle registered NPCs that are currently missing are not spawned (the body may only be unloaded).
+Pending due times use the world's accumulated active time (`Server.getIngameTimestamp`), not wall-clock -- so pause and empty-server idle do not burn the respawn delay. On startup, stored overdue respawns (pending `next_respawn` already reached) wait ~30s, then spawn through the same timer path as a normal due. A failed spawn deletes the default body (if any) and retries every 30s (`pending (retry)`). Idle registered NPCs that are currently missing are not spawned (the body may only be unloaded). Legacy unix `next_respawn` values from older plugin builds are converted once on load.
 
 ## License
 

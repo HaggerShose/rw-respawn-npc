@@ -18,8 +18,8 @@ package de.mahagst.risingworld.respawnnpc;
  * @param posZ                spawn pose Z
  * @param yaw                 spawn facing degrees
  * @param intervalSeconds     delay after death until respawn
- * @param nextRespawn         epoch ms when due, or null if idle
- * @param createdAt           row creation epoch ms
+ * @param nextRespawn         world-time ms when due ({@code Server.getIngameTimestamp}), or null if idle
+ * @param createdAt           row creation wall-clock epoch ms
  * @param name                optional custom name
  * @param health              snapshot health
  * @param hunger              snapshot hunger
