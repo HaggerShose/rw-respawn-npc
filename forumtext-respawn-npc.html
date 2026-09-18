@@ -25,36 +25,40 @@
 <p></p>
 <p><span style="color:#696969;"><strong>How it works</strong></span></p>
 <ul>
-	<li><span style="color:#696969;">Stand at the desired respawn spot and face the direction you want</span></li>
 	<li><span style="color:#696969;">Look at an NPC, or stand close if it is roaming (within 10 blocks)</span></li>
-	<li><span style="color:#696969;">Use [tt]/make-respawn &lt;minutes&gt;[/tt] in chat</span></li>
+	<li><span style="color:#696969;">Use [tt]/make-respawn &lt;minutes&gt;[/tt] in chat -- this saves the NPC snapshot and uses your current location as the spawn pose (you can change that next)</span></li>
+	<li><span style="color:#696969;">Use [tt]/respawn-list[/tt] to see all registered NPCs and their [tt]#id[/tt]s</span></li>
+	<li><span style="color:#696969;">Go to the desired respawn spot and face the direction you want</span></li>
+	<li><span style="color:#696969;">Use [tt]/respawn-update #id pose[/tt] to set the spawn pose (no need to look at the NPC)</span></li>
 	<li><span style="color:#696969;">That NPC dies</span></li>
 	<li><span style="color:#696969;">A one-shot timer starts</span></li>
 	<li><span style="color:#696969;">The world keeps turning</span></li>
 	<li><span style="color:#696969;">When the timer expires, a new NPC is spawned at the saved pose and the snapshot is applied</span></li>
-	<li><span style="color:#696969;">Optional: if a guard post is set, the NPC walks there shortly after spawn and locks facing on arrival</span>
+	<li><span style="color:#696969;">Optional: stand where the guard should stay, then [tt]/make-guard #id[/tt] -- after spawn the NPC walks there and locks facing on arrival</span>
 	<p><br></p></li>
 </ul>
 <p></p>
 <p><span style="color:#696969;">The snapshot is taken at register / update time, never on death.</span></p>
 <p><span style="color:#696969;">While a timer is already running, further deaths do not restart or extend it.</span></p>
-<p><span style="color:#696969;">This is not a perfect clone: every readable field is stored, but only fields with setters are restored. Secondary hand item and pregnancy are saved for later API versions and ignored on spawn.</span></p>
+<p><span style="color:#696969;">This is not a perfect clone: every readable field is stored, but only fields with setters are restored. Secondary hand item and pregnancy are saved for later API versions but ignored on respawn for now.</span></p>
 <woltlab-spoiler data-label="Deutsch">
 	<p><span style="color:#696969;"><strong>So funktioniert es</strong></span></p>
 	<ul>
-		<li><span style="color:#696969;">Am gewünschten Respawn-Ort stehen und in die gewünschte Richtung schauen</span></li>
 		<li><span style="color:#696969;">NPC anschauen, oder nah ranstellen wenn er umherläuft (innerhalb von 10 Blöcken)</span></li>
-		<li><span style="color:#696969;">[tt]/make-respawn &lt;minutes&gt;[/tt] im Chat eingeben</span></li>
+		<li><span style="color:#696969;">[tt]/make-respawn &lt;minutes&gt;[/tt] im Chat -- speichert den NPC-Snapshot und nimmt euren aktuellen Standort als Spawn-Pose (die könnt ihr als Nächstes ändern)</span></li>
+		<li><span style="color:#696969;">Mit [tt]/respawn-list[/tt] alle registrierten NPCs und ihre [tt]#id[/tt]s anzeigen</span></li>
+		<li><span style="color:#696969;">Zum gewünschten Respawn-Ort gehen und in die gewünschte Richtung schauen</span></li>
+		<li><span style="color:#696969;">Mit [tt]/respawn-update #id pose[/tt] die Spawn-Pose setzen (NPC muss nicht angeschaut werden)</span></li>
 		<li><span style="color:#696969;">Der NPC stirbt</span></li>
 		<li><span style="color:#696969;">Ein einmaliger Timer startet</span></li>
 		<li><span style="color:#696969;">Die Welt dreht sich weiter</span></li>
 		<li><span style="color:#696969;">Nach Ablauf spawnt ein neuer NPC an der gespeicherten Pose und der Snapshot wird angewendet</span></li>
-		<li><span style="color:#696969;">Optional: Ist ein Wachposten gesetzt, läuft der NPC kurz nach dem Spawn dorthin und locked die Blickrichtung bei Ankunft</span>
+		<li><span style="color:#696969;">Optional: dort hinstellen, wo der Wächter bleiben soll, dann [tt]/make-guard #id[/tt] -- nach dem Spawn läuft der NPC dorthin und locked die Blickrichtung bei Ankunft</span>
 		<p><br></p></li>
 	</ul>
 	<p><span style="color:#696969;">Der Snapshot wird beim Registrieren / Updaten genommen, nie beim Tod.</span></p>
 	<p><span style="color:#696969;">Läuft bereits ein Timer, wird er durch weitere Tode weder neu gestartet noch verlängert.</span></p>
-	<p><span style="color:#696969;">Das ist kein perfekter Klon: Jedes lesbare Feld wird gespeichert, aber nur Felder mit Settern werden wiederhergestellt. Item in der Nebenhand und Schwangerschaft werden für spätere API-Versionen mitgespeichert und beim Spawn ignoriert.</span></p>
+	<p><span style="color:#696969;">Das ist kein perfekter Klon: Jedes lesbare Feld wird gespeichert, aber nur Felder mit Settern werden wiederhergestellt. Item in der Nebenhand und Schwangerschaft werden für spätere API-Versionen mitgespeichert aber beim Respawn erstmal ignoriert.</span></p>
 </woltlab-spoiler>
 <p></p>
 <p><span style="color:#696969;"><strong>Commands</strong></span></p>
@@ -81,7 +85,6 @@
 <p><span style="color:#696969;">Maximum respawn time: <strong>24 hours</strong>.</span></p>
 <p><span style="color:#696969;">Transient NPCs cannot be registered.</span></p>
 <p><span style="color:#696969;">Guard post is independent of spawn pose: [tt]/respawn-update pose[/tt] does not change it.</span></p>
-<p><span style="color:#696969;"><strong>Tip:</strong> For stationary guards, set the NPC to defensive/aggressive (and use a guard post). Roaming AI otherwise keeps them wandering until they arrive and lock.</span></p>
 <woltlab-spoiler data-label="Deutsch">
 	<p><span style="color:#696969;"><strong>Befehle</strong></span></p>
 	<p><span style="color:#696969;">Nur Server-Admins aus <em>Server_Admins</em> in <em>server.properties</em> können diese Befehle verwenden.</span></p>
@@ -106,7 +109,6 @@
 	<p><span style="color:#696969;">Maximale Respawn-Zeit: <strong>24 Stunden</strong>.</span></p>
 	<p><span style="color:#696969;">Transient NPCs können nicht registriert werden.</span></p>
 	<p><span style="color:#696969;">Der Wachposten ist unabhängig von der Spawn-Pose: [tt]/respawn-update pose[/tt] ändert ihn nicht.</span></p>
-	<p><span style="color:#696969;"><strong>Tipp:</strong> Für stehende Wächter den NPC auf defensive/aggressive stellen (und einen Wachposten setzen). Sonst wandert die normale KI weiter, bis sie ankommt und locked.</span></p>
 </woltlab-spoiler>
 <p></p>
 <p><span style="color:#696969;"><strong>Download / Installation</strong></span></p>
