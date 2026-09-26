@@ -19,7 +19,7 @@ Beobachtungen:
 
 ## Einfach
 - ~~Update-Modes zusammenziehen~~ Ein `update()`-Pfad mit Flags. `all` bleibt ein SQL-Write (nicht zwei Calls).
-- List/Info-Format + Guard-Farben ins Plugin (oder eigene kleine List-Hilfe)
+- ~~List/Info-Format + Guard-Farben~~ `RespawnFormat`; Plugin fragt Guard direkt (`statusOf` / `postPosOf`).
 
 ## Muss ich diskutieren
 - Generation-Timer prüfen: reicht timer == null + kill, oder braucht ihr die Generation wirklich gegen Race nach Cancel?

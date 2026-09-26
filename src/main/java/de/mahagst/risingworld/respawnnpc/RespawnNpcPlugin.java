@@ -1,11 +1,13 @@
 package de.mahagst.risingworld.respawnnpc;
 
+import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 
 import de.mahagst.risingworld.respawnnpc.guard.GuardService;
 import net.risingworld.api.Plugin;
+import net.risingworld.api.Server;
 import net.risingworld.api.World;
 import net.risingworld.api.database.Database;
 import net.risingworld.api.events.EventMethod;
@@ -46,8 +48,6 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 		respawn = new RespawnService(this, repository);
 		guard = new GuardService(this, repository, respawn::livingNpcForRespawn);
 		respawn.setGuardHooks(guard::onBodyReplaced, guard::onRespawnRemoved, guard::onPending);
-		respawn.setGuardStatus(guard::statusOf);
-		respawn.setGuardPostPos(guard::postPosOf);
 		if (!respawn.loadMaps()) {
 			System.out.println("[RespawnNpc] Failed to load respawn rows; plugin not started");
 			abortEnable();
@@ -120,7 +120,7 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 			case "/respawn-update" -> respawnUpdate(player, args);
 			case "/respawn-now" -> withOptionalIdOrFocus(player, args, "/respawn-now [#id]", respawn::now);
 			case "/respawn-remove" -> withOptionalIdOrFocus(player, args, "/respawn-remove [#id]", respawn::remove);
-			case "/respawn-info" -> withOptionalIdOrFocus(player, args, "/respawn-info [#id]", respawn::info);
+			case "/respawn-info" -> withOptionalIdOrFocus(player, args, "/respawn-info [#id]", this::info);
 			case "/respawn-list" -> respawnList(player, args);
 			case "/make-guard" -> guardById(player, args, "/make-guard <id>", guard::makeGuard);
 			case "/guard-remove" -> guardById(player, args, "/guard-remove <id>", guard::removeGuard);
@@ -288,7 +288,37 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 			player.sendTextMessage("Usage: /respawn-list [timer]");
 			return;
 		}
-		respawn.list(player);
+		Optional<List<RespawnNpc>> loaded = respawn.loadAll();
+		if (loaded.isEmpty()) {
+			RespawnFormat.fail(player, "respawn-list", "database query failed");
+			return;
+		}
+		List<RespawnNpc> all = loaded.get();
+		if (all.isEmpty()) {
+			player.sendTextMessage("No respawn NPCs registered.");
+			return;
+		}
+		StringBuilder out = new StringBuilder();
+		out.append("<color=#aaaaaa>Respawn NPCs (").append(all.size()).append(")</color>");
+		for (RespawnNpc saved : all) {
+			out.append('\n').append(formatLine(saved));
+		}
+		player.sendTextMessage(out.toString());
+	}
+
+	/** {@code /respawn-info}: one formatted chat line. */
+	private void info(Player player, RespawnNpc saved) {
+		player.sendTextMessage(formatLine(saved));
+	}
+
+	private String formatLine(RespawnNpc saved) {
+		return RespawnFormat.formatEntry(
+				saved,
+				World.getNpc(saved.currentNpcId()),
+				respawn.hasPendingTimer(saved.respawnId()),
+				Server.getIngameTimestamp(),
+				guard.statusOf(saved.respawnId()),
+				guard.postPosOf(saved.respawnId()));
 	}
 
 	/**

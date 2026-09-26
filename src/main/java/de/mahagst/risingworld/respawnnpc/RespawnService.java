@@ -2,12 +2,10 @@ package de.mahagst.risingworld.respawnnpc;
 
 import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.BiConsumer;
 import java.util.function.LongConsumer;
-import java.util.function.LongFunction;
 
 import net.risingworld.api.Plugin;
 import net.risingworld.api.Server;
@@ -64,10 +62,6 @@ public final class RespawnService implements Listener {
 	/** Fired after a death timer is scheduled so guard can drop proximity until respawn. */
 	private LongConsumer onPending = id -> {
 	};
-	/** Optional label for list colouring (e.g. walking / at post). */
-	private LongFunction<String> guardStatus = id -> "";
-	/** Optional formatted post coords for list lines. */
-	private LongFunction<String> guardPostPos = id -> "";
 
 	public RespawnService(Plugin plugin, RespawnRepository repository) {
 		this.plugin = plugin;
@@ -91,16 +85,6 @@ public final class RespawnService implements Listener {
 		};
 		this.onPending = onPending != null ? onPending : id -> {
 		};
-	}
-
-	/** List/info guard state string provider ({@code GuardService#statusOf}). */
-	public void setGuardStatus(LongFunction<String> guardStatus) {
-		this.guardStatus = guardStatus != null ? guardStatus : id -> "";
-	}
-
-	/** List/info guard post position provider ({@code GuardService#postPosOf}). */
-	public void setGuardPostPos(LongFunction<String> guardPostPos) {
-		this.guardPostPos = guardPostPos != null ? guardPostPos : id -> "";
 	}
 
 	/**
@@ -375,29 +359,17 @@ public final class RespawnService implements Listener {
 		player.sendTextMessage("NPC removed.");
 	}
 
-	/** {@code /respawn-info}: one formatted chat line for this entry. */
-	public void info(Player player, RespawnNpc saved) {
-		player.sendTextMessage(formatEntry(saved, World.getNpc(saved.currentNpcId())));
+	/**
+	 * All rows for {@code /respawn-list}. Empty optional means the query failed (already logged).
+	 */
+	public Optional<List<RespawnNpc>> loadAll() {
+		return repository.findAll();
 	}
 
-	/** {@code /respawn-list}: all entries in one coloured chat block. */
-	public void list(Player player) {
-		Optional<List<RespawnNpc>> loaded = repository.findAll();
-		if (loaded.isEmpty()) {
-			commandFail(player, "respawn-list", "database query failed");
-			return;
-		}
-		List<RespawnNpc> all = loaded.get();
-		if (all.isEmpty()) {
-			player.sendTextMessage("No respawn NPCs registered.");
-			return;
-		}
-		StringBuilder out = new StringBuilder();
-		out.append("<color=#aaaaaa>Respawn NPCs (").append(all.size()).append(")</color>");
-		for (RespawnNpc saved : all) {
-			out.append('\n').append(formatEntry(saved, World.getNpc(saved.currentNpcId())));
-		}
-		player.sendTextMessage(out.toString());
+	/** True when a RAM one-shot timer is live for this respawn id. */
+	public boolean hasPendingTimer(long respawnId) {
+		RespawnState state = byRespawnId.get(respawnId);
+		return state != null && state.timer != null;
 	}
 
 	/**
@@ -601,75 +573,6 @@ public final class RespawnService implements Listener {
 		}
 		cancelTimer(state);
 		npcIdToRespawnId.remove(state.npcId);
-	}
-
-	/** One coloured chat line: state, interval, spawn/post/now positions. */
-	private String formatEntry(RespawnNpc saved, Npc current) {
-		RespawnState ram = byRespawnId.get(saved.respawnId());
-		boolean hasTimer = ram != null && ram.timer != null;
-		boolean dueDb = saved.nextRespawn() != null;
-		boolean alive = current != null && !current.isDead();
-		String state;
-		String color;
-		if (dueDb || hasTimer) {
-			if (hasTimer) {
-				if (!dueDb || saved.nextRespawn() <= worldNow()) {
-					state = "pending (retry)";
-				} else {
-					long rest = Math.max(0, (saved.nextRespawn() - worldNow()) / 1000);
-					state = "pending " + rest + "s";
-				}
-			} else {
-				state = "due, no timer";
-			}
-			color = "#ffcc66";
-		} else if (current == null) {
-			state = "missing";
-			color = "#888888";
-		} else if (!alive) {
-			state = "dead";
-			color = "#ff6666";
-		} else {
-			String guard = guardStatus.apply(saved.respawnId());
-			if (guard == null || guard.isBlank()) {
-				state = "alive";
-				color = "#cccccc";
-			} else {
-				state = guard;
-				color = switch (guard) {
-					case "at post" -> "#66ff88";
-					case "walking" -> "#66aaff";
-					case "away" -> "#ccaa66";
-					case "combat" -> "#ff5555";
-					default -> "#cccccc";
-				};
-			}
-		}
-		String label = saved.typeName();
-		if (saved.name() != null && !saved.name().isBlank()) {
-			label = saved.typeName() + " \"" + saved.name() + "\"";
-		}
-		String now = alive ? fmtPos(current.getPosition()) : "-";
-		String locked = alive && current.isLocked() ? "  <color=#ffaa44>locked</color>" : "";
-		String post = guardPostPos.apply(saved.respawnId());
-		String postPart = (post == null || post.isBlank()) ? "" : "   post " + post;
-		return "<color=#ffffff>#" + saved.respawnId() + "</color>  " + label
-				+ "  <color=" + color + ">" + state + "</color>" + locked
-				+ "\n  " + saved.intervalSeconds() + "s"
-				+ "   spawn " + fmtPos(saved.posX(), saved.posY(), saved.posZ())
-				+ postPart
-				+ "   now " + now;
-	}
-
-	private static String fmtPos(Vector3f pos) {
-		if (pos == null) {
-			return "-";
-		}
-		return fmtPos(pos.x, pos.y, pos.z);
-	}
-
-	private static String fmtPos(float x, float y, float z) {
-		return String.format(Locale.US, "(%.1f, %.1f, %.1f)", x, y, z);
 	}
 
 	private static void commandFail(Player player, String operation, long respawnId, String detail) {
