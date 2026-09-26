@@ -281,7 +281,8 @@ public final class RespawnService implements Listener {
 	}
 
 	/**
-	 * {@code /respawn-now}: spawn replacement immediately (deletes living body after successful spawn).
+	 * {@code /respawn-now}: replace the body immediately.
+	 * A still-living body is unbound and deleted before the new spawn.
 	 * Failed spawn schedules {@link #scheduleRetry} so the RAM timer stays in place.
 	 */
 	public void now(Player player, RespawnNpc saved) {
@@ -498,17 +499,26 @@ public final class RespawnService implements Listener {
 	}
 
 	/**
-	 * Spawn at register-time pose, apply snapshot, delete old body if still alive,
-	 * rebind RAM maps + DB {@code current_npc_id} and clear pending, fire {@link #onBodyReplaced}.
+	 * Drop a still-living body first, then spawn at the register-time pose and apply the snapshot.
+	 * Spawning while the old body is still alive leaves behaviour overrides on the fresh NPC
+	 * (observed with {@code /respawn-now}; a death respawn already has no living body).
+	 * Unbind before {@code delete()} so a death event for the old id is ignored.
+	 * Rebind RAM maps + DB {@code current_npc_id}, clear pending, fire {@link #onBodyReplaced}.
 	 * Cancels a still-running timer only after a successful exchange.
 	 * Caller schedules {@link #scheduleRetry} on failure so no default body is left without a timer.
+	 * A failed spawn after the old body was deleted leaves a gap until that retry.
 	 *
 	 * @return false if spawn, apply, or DB write failed
 	 */
 	private boolean spawnReplacement(RespawnNpc saved) {
 		RespawnState state = byRespawnId.get(saved.respawnId());
-		Npc living = World.getNpc(saved.currentNpcId());
-		boolean livingExists = living != null && !living.isDead();
+		long oldId = saved.currentNpcId();
+		Npc living = World.getNpc(oldId);
+		npcIdToRespawnId.remove(oldId);
+		if (living != null && !living.isDead()) {
+			npcIdToRespawnId.remove(living.getGlobalID());
+			living.delete();
+		}
 		Vector3f pos = new Vector3f(saved.posX(), saved.posY(), saved.posZ());
 		Quaternion rot = new Quaternion().fromAngles(0f, saved.yaw(), 0f);
 		Npc spawned = World.spawnNpc(saved.typeId(), saved.variant(), pos, rot, false);
@@ -529,12 +539,6 @@ public final class RespawnService implements Listener {
 			System.out.println("[RespawnNpc] completeRespawn failed for #" + saved.respawnId());
 			spawned.delete();
 			return false;
-		}
-		if (livingExists) {
-			npcIdToRespawnId.remove(living.getGlobalID());
-			living.delete();
-		} else {
-			npcIdToRespawnId.remove(saved.currentNpcId());
 		}
 		if (state != null) {
 			state.npcId = newId;
