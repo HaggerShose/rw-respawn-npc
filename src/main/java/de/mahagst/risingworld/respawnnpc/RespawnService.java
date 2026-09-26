@@ -261,23 +261,95 @@ public final class RespawnService implements Listener {
 	}
 
 	/**
-	 * {@code /respawn-update} dispatcher: snapshot, pose, both, or timer only.
+	 * {@code /respawn-update}: snapshot, pose, both in one SQL write, or timer only.
+	 * Pose never touches the guard post. Timer does not restart a pending timer.
 	 *
-	 * @param focusedNpc   live body for snapshot modes; may be null for pose/timer with {@code #id}
-	 * @param timerMinutes only used for {@link UpdateMode#TIMER}
+	 * @param focusedNpc    live body for snapshot; may be null for pose/timer with {@code #id}
+	 * @param timerMinutes  non-null for timer-only mode (snapshot/pose flags ignored)
 	 */
-	public void applyUpdate(
+	public void update(
 			Player player,
 			RespawnNpc saved,
 			Npc focusedNpc,
-			UpdateMode mode,
+			boolean doSnapshot,
+			boolean doPose,
 			Integer timerMinutes) {
-		switch (mode) {
-			case SNAPSHOT -> updateSnapshot(player, saved, focusedNpc);
-			case POSE -> updatePose(player, saved);
-			case ALL -> updateAll(player, saved, focusedNpc);
-			case TIMER -> updateInterval(player, saved, intervalSecondsFromMinutes(timerMinutes));
+		if (timerMinutes != null) {
+			int intervalSeconds = intervalSecondsFromMinutes(timerMinutes);
+			if (saved.intervalSeconds() == intervalSeconds) {
+				player.sendTextMessage("Interval not changed (already " + intervalSeconds + "s).");
+				return;
+			}
+			if (!repository.setIntervalSeconds(saved.respawnId(), intervalSeconds)) {
+				commandFail(player, "respawn-update timer", saved.respawnId(), "database write failed");
+				return;
+			}
+			RespawnState state = byRespawnId.get(saved.respawnId());
+			if (state != null) {
+				state.intervalSeconds = intervalSeconds;
+			}
+			player.sendTextMessage("Interval updated to " + intervalSeconds + "s (#" + saved.respawnId() + ").");
+			return;
 		}
+
+		Npc live = null;
+		if (doSnapshot) {
+			live = resolveLiveForSnapshot(player, saved, focusedNpc);
+			if (live == null) {
+				return;
+			}
+		}
+
+		float posX = saved.posX();
+		float posY = saved.posY();
+		float posZ = saved.posZ();
+		float yaw = saved.yaw();
+		if (doPose) {
+			Vector3f spawnPos = player.getPosition();
+			if (spawnPos == null) {
+				player.sendTextMessage("Could not read player position.");
+				return;
+			}
+			posX = spawnPos.x;
+			posY = spawnPos.y;
+			posZ = spawnPos.z;
+			yaw = Pose.lookYaw(player.getViewDirection(), player.getRotation());
+		}
+
+		if (doSnapshot) {
+			RespawnNpc snapshot = NpcSnapshot.capture(
+					live,
+					new Vector3f(posX, posY, posZ),
+					yaw,
+					saved.respawnId(),
+					saved.intervalSeconds(),
+					saved.nextRespawn(),
+					saved.createdAt());
+			boolean ok = doPose
+					? repository.replaceSnapshotAndPose(snapshot)
+					: repository.replaceSnapshot(snapshot);
+			if (!ok) {
+				commandFail(
+						player,
+						doPose ? "respawn-update all" : "respawn-update snapshot",
+						saved.respawnId(),
+						"database write failed");
+				return;
+			}
+			player.sendTextMessage(doPose
+					? "Snapshot and spawn pose updated (#" + saved.respawnId() + ")."
+					: "Snapshot updated (#" + saved.respawnId() + ").");
+			return;
+		}
+
+		if (!doPose) {
+			return;
+		}
+		if (!repository.setSpawnPose(saved.respawnId(), posX, posY, posZ, yaw)) {
+			commandFail(player, "respawn-update pose", saved.respawnId(), "database write failed");
+			return;
+		}
+		player.sendTextMessage("Spawn pose updated (#" + saved.respawnId() + ").");
 	}
 
 	/**
@@ -357,75 +429,6 @@ public final class RespawnService implements Listener {
 		schedule(respawnId, state.intervalSeconds);
 	}
 
-	/** Overwrite snapshot columns; keeps spawn pose, interval, pending, current npc id. */
-	private void updateSnapshot(Player player, RespawnNpc saved, Npc focusedNpc) {
-		Npc live = resolveLiveForSnapshot(player, saved, focusedNpc);
-		if (live == null) {
-			return;
-		}
-		Vector3f keepPos = new Vector3f(saved.posX(), saved.posY(), saved.posZ());
-		RespawnNpc snapshot = NpcSnapshot.capture(
-				live,
-				keepPos,
-				saved.yaw(),
-				saved.respawnId(),
-				saved.intervalSeconds(),
-				saved.nextRespawn(),
-				saved.createdAt());
-		if (!repository.replaceSnapshot(snapshot)) {
-			commandFail(player, "respawn-update snapshot", saved.respawnId(), "database write failed");
-			return;
-		}
-		player.sendTextMessage("Snapshot updated (#" + saved.respawnId() + ").");
-	}
-
-	/** Save spawn pose from the admin's current position/yaw. Does not touch guard_posts. */
-	private void updatePose(Player player, RespawnNpc saved) {
-		Vector3f spawnPos = player.getPosition();
-		if (spawnPos == null) {
-			player.sendTextMessage("Could not read player position.");
-			return;
-		}
-		float yaw = Pose.lookYaw(player.getViewDirection(), player.getRotation());
-		if (!repository.setSpawnPose(
-				saved.respawnId(),
-				spawnPos.x,
-				spawnPos.y,
-				spawnPos.z,
-				yaw)) {
-			commandFail(player, "respawn-update pose", saved.respawnId(), "database write failed");
-			return;
-		}
-		player.sendTextMessage("Spawn pose updated (#" + saved.respawnId() + ").");
-	}
-
-	/** Snapshot attributes and spawn pose in one DB write. */
-	private void updateAll(Player player, RespawnNpc saved, Npc focusedNpc) {
-		Npc live = resolveLiveForSnapshot(player, saved, focusedNpc);
-		if (live == null) {
-			return;
-		}
-		Vector3f spawnPos = player.getPosition();
-		if (spawnPos == null) {
-			player.sendTextMessage("Could not read player position.");
-			return;
-		}
-		float yaw = Pose.lookYaw(player.getViewDirection(), player.getRotation());
-		RespawnNpc snapshot = NpcSnapshot.capture(
-				live,
-				spawnPos,
-				yaw,
-				saved.respawnId(),
-				saved.intervalSeconds(),
-				saved.nextRespawn(),
-				saved.createdAt());
-		if (!repository.replaceSnapshotAndPose(snapshot)) {
-			commandFail(player, "respawn-update all", saved.respawnId(), "database write failed");
-			return;
-		}
-		player.sendTextMessage("Snapshot and spawn pose updated (#" + saved.respawnId() + ").");
-	}
-
 	private Npc resolveLiveForSnapshot(Player player, RespawnNpc saved, Npc focusedNpc) {
 		Npc live = focusedNpc;
 		if (live == null) {
@@ -440,23 +443,6 @@ public final class RespawnService implements Listener {
 			return null;
 		}
 		return live;
-	}
-
-	/** Persist interval and refresh {@link RespawnState#intervalSeconds}. Does not restart a pending timer. */
-	private void updateInterval(Player player, RespawnNpc saved, int intervalSeconds) {
-		if (saved.intervalSeconds() == intervalSeconds) {
-			player.sendTextMessage("Interval not changed (already " + intervalSeconds + "s).");
-			return;
-		}
-		if (!repository.setIntervalSeconds(saved.respawnId(), intervalSeconds)) {
-			commandFail(player, "respawn-update timer", saved.respawnId(), "database write failed");
-			return;
-		}
-		RespawnState state = byRespawnId.get(saved.respawnId());
-		if (state != null) {
-			state.intervalSeconds = intervalSeconds;
-		}
-		player.sendTextMessage("Interval updated to " + intervalSeconds + "s (#" + saved.respawnId() + ").");
 	}
 
 	/**
@@ -732,13 +718,5 @@ public final class RespawnService implements Listener {
 		int intervalSeconds;
 		Timer timer;
 		int generation;
-	}
-
-	/**
-	 * Modes for {@link #applyUpdate}.
-	 * {@link #POSE} never touches the guard post.
-	 */
-	public enum UpdateMode {
-		SNAPSHOT, POSE, ALL, TIMER
 	}
 }

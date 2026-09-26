@@ -18,7 +18,7 @@ Beobachtungen:
 ---
 
 ## Einfach
-- Update-Modes zusammenziehen (z.B. nur snapshot / pose / timer, all = zwei Calls)
+- ~~Update-Modes zusammenziehen~~ Ein `update()`-Pfad mit Flags. `all` bleibt ein SQL-Write (nicht zwei Calls).
 - List/Info-Format + Guard-Farben ins Plugin (oder eigene kleine List-Hilfe)
 
 ## Muss ich diskutieren

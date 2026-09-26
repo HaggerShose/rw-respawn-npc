@@ -10,7 +10,7 @@ Javadoc: local under `RisingWorld/Data/SDK`, online at <https://javadoc.rising-w
 
 ```text
 RespawnNpcPlugin   -- entry (plugin.yml main): lifecycle, admin, all commands, LoS/#id focus
-RespawnService     -- respawn domain: RespawnState, timers, death -> schedule, spawn/apply
+RespawnService     -- respawn domain: RespawnState, timers, death -> schedule, spawn/apply. `/respawn-update` is one method (flags); `all` stays one SQL write.
 guard/             -- GuardService + GuardPost (runtime only; no Listener)
 RespawnRepository  -- SQLite: respawn_npcs + guard_posts
 NpcSnapshot        -- capture / apply settable fields

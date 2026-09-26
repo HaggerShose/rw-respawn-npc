@@ -4,7 +4,6 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 
-import de.mahagst.risingworld.respawnnpc.RespawnService.UpdateMode;
 import de.mahagst.risingworld.respawnnpc.guard.GuardService;
 import net.risingworld.api.Plugin;
 import net.risingworld.api.World;
@@ -185,7 +184,13 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 			if (savedOpt.isEmpty()) {
 				return;
 			}
-			respawn.applyUpdate(player, savedOpt.get(), null, request.mode(), request.timerMinutes());
+			respawn.update(
+					player,
+					savedOpt.get(),
+					null,
+					request.snapshot(),
+					request.pose(),
+					request.timerMinutes());
 			return;
 		}
 		withFocused(player, (p, npc) -> {
@@ -193,13 +198,20 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 			if (saved.isEmpty()) {
 				return;
 			}
-			respawn.applyUpdate(p, saved.get(), npc, request.mode(), request.timerMinutes());
+			respawn.update(
+					p,
+					saved.get(),
+					npc,
+					request.snapshot(),
+					request.pose(),
+					request.timerMinutes());
 		});
 	}
 
 	private static UpdateRequest parseUpdateRequest(String[] args) {
 		Long respawnId = null;
-		UpdateMode mode = UpdateMode.SNAPSHOT;
+		boolean snapshot = true;
+		boolean pose = false;
 		Integer timerMinutes = null;
 		int i = 1;
 		if (i < args.length && args[i].startsWith("#")) {
@@ -219,15 +231,16 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 			switch (token) {
 				case "snapshot" -> i++;
 				case "pose" -> {
-					mode = UpdateMode.POSE;
+					snapshot = false;
+					pose = true;
 					i++;
 				}
 				case "all" -> {
-					mode = UpdateMode.ALL;
+					pose = true;
 					i++;
 				}
 				case "timer" -> {
-					mode = UpdateMode.TIMER;
+					snapshot = false;
 					i++;
 					if (i >= args.length) {
 						return null;
@@ -247,7 +260,7 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 		if (i != args.length) {
 			return null;
 		}
-		return new UpdateRequest(respawnId, mode, timerMinutes);
+		return new UpdateRequest(respawnId, snapshot, pose, timerMinutes);
 	}
 
 	private void guardById(Player player, String[] args, String usage, GuardIdHandler handler) {
@@ -405,6 +418,6 @@ public class RespawnNpcPlugin extends Plugin implements Listener {
 		void handle(Player player, long respawnId);
 	}
 
-	private record UpdateRequest(Long respawnId, UpdateMode mode, Integer timerMinutes) {
+	private record UpdateRequest(Long respawnId, boolean snapshot, boolean pose, Integer timerMinutes) {
 	}
 }
